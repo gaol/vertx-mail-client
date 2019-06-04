@@ -22,6 +22,7 @@ import io.vertx.core.MultiMap;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.CaseInsensitiveHeaders;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.streams.ReadStream;
 
 import java.util.Arrays;
 import java.util.List;
@@ -36,6 +37,8 @@ import java.util.Objects;
 @DataObject
 public class MailAttachment {
 
+  private ReadStream<Buffer> stream;
+  private Integer size;
   private Buffer data;
   private String name;
   private String contentType;
@@ -66,6 +69,8 @@ public class MailAttachment {
     this.description = other.description;
     this.contentId = other.contentId;
     this.headers = other.headers == null ? null : new CaseInsensitiveHeaders().addAll(other.headers);
+    this.size = other.size;
+    this.stream = other.stream;
   }
 
   /**
@@ -85,6 +90,7 @@ public class MailAttachment {
     if (headers != null) {
       this.headers = Utils.jsonToMultiMap(headers);
     }
+    this.size = json.getInteger("size");
   }
 
   /**
@@ -104,6 +110,53 @@ public class MailAttachment {
    */
   public MailAttachment setData(final Buffer data) {
     this.data = data;
+    return this;
+  }
+
+  /**
+   * Gets the data stream.
+   *
+   * @return the data stream
+   */
+  public ReadStream<Buffer> getStream() {
+    return stream;
+  }
+
+  /**
+   * Sets the data stream.
+   *
+   * @param stream data stream to be used at attachment
+   * @return this to be able to use it fluently
+   */
+  @GenIgnore
+  public MailAttachment setStream(ReadStream<Buffer> stream) {
+    this.stream = stream;
+    return this;
+  }
+
+  /**
+   * Gets the size of the attachment.
+   *
+   * @return the size of the attachment
+   */
+  public Integer getSize() {
+    return size;
+  }
+
+  /**
+   * Sets the size of the attachment.
+   *<p>
+   * It is needed when using ReadStream for the MailAttachement.
+   *</p>
+   *
+   * @param size the size of the attachment
+   * @return this to be able to use it fluently
+   */
+  public MailAttachment setSize(Integer size) {
+    if (size < 0) {
+      throw new IllegalArgumentException("Size of the Attachment cannot be smaller than 0");
+    }
+    this.size = size;
     return this;
   }
 
@@ -267,11 +320,12 @@ public class MailAttachment {
     if (headers != null) {
       json.put("headers", Utils.multiMapToJson(headers));
     }
+    Utils.putIfNotNull(json, "size", this.size);
     return json;
   }
 
   private List<Object> getList() {
-    return Arrays.asList(data, name, disposition, description, contentId, headers);
+    return Arrays.asList(data, name, disposition, description, contentId, headers, size);
   }
 
   @Override

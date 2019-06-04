@@ -19,17 +19,24 @@ package io.vertx.ext.mail.impl;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.impl.NoStackTraceThrowable;
-import io.vertx.core.impl.logging.Logger;
-import io.vertx.core.impl.logging.LoggerFactory;
+import io.vertx.core.logging.Logger;
+import io.vertx.core.logging.LoggerFactory;
+import io.vertx.core.streams.ReadStream;
 import io.vertx.ext.mail.MailConfig;
 import io.vertx.ext.mail.MailMessage;
 import io.vertx.ext.mail.MailResult;
 import io.vertx.ext.mail.mailencoder.EmailAddress;
+import io.vertx.ext.mail.mailencoder.EncodedPart;
 import io.vertx.ext.mail.mailencoder.MailEncoder;
+import io.vertx.ext.mail.mailencoder.Utils;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 class SMTPSendMail {
 
@@ -40,17 +47,18 @@ class SMTPSendMail {
   private final MailConfig config;
   private final Handler<AsyncResult<MailResult>> resultHandler;
   private final MailResult mailResult;
-  private final String hostname;
-
-  private String mailMessage;
+  private final EncodedPart encodedPart;
+  private final AtomicLong wrottern = new AtomicLong();
 
   SMTPSendMail(SMTPConnection connection, MailMessage email, MailConfig config, String hostname, Handler<AsyncResult<MailResult>> resultHandler) {
     this.connection = connection;
     this.email = email;
     this.config = config;
     this.resultHandler = resultHandler;
-    mailResult = new MailResult();
-    this.hostname = hostname;
+    this.mailResult = new MailResult();
+    final MailEncoder encoder = new MailEncoder(email, hostname);
+    this.encodedPart = encoder.encodeMail();
+    this.mailResult.setMessageID(encoder.getMessageID());
   }
 
   void start() {
@@ -71,14 +79,9 @@ class SMTPSendMail {
    */
   private boolean checkSize() {
     final int size = connection.getCapa().getSize();
-    if (size > 0) {
-      createMailMessage();
-      if (mailMessage.length() > size) {
-        handleError("message exceeds allowed size limit");
-        return false;
-      } else {
-        return true;
-      }
+    if (size > 0 && encodedPart.size() > size) {
+      handleError("message exceeds allowed size limit");
+      return false;
     } else {
       return true;
     }
@@ -96,12 +99,16 @@ class SMTPSendMail {
       EmailAddress from = new EmailAddress(fromAddr);
       String sizeParameter;
       if (connection.getCapa().getSize() > 0) {
-        sizeParameter = " SIZE=" + mailMessage.length();
+        sizeParameter = " SIZE=" + encodedPart.size();
       } else {
         sizeParameter = "";
       }
-      connection.write("MAIL FROM:<" + from.getEmail() + ">" + sizeParameter, message -> {
-        log.debug("MAIL FROM result: " + message);
+      final String line = "MAIL FROM:<" + from.getEmail() + ">" + sizeParameter;
+      connection.write(line, message -> {
+        if (log.isDebugEnabled()) {
+          wrottern.getAndAdd(line.length());
+          log.debug("MAIL FROM result: " + message);
+        }
         if (StatusCode.isStatusOk(message)) {
           rcptToCmd();
         } else {
@@ -132,7 +139,11 @@ class SMTPSendMail {
   private void rcptToCmd(List<String> recipientAddrs, int i) {
     try {
       EmailAddress toAddr = new EmailAddress(recipientAddrs.get(i));
-      connection.write("RCPT TO:<" + toAddr.getEmail() + ">", message -> {
+      final String line = "RCPT TO:<" + toAddr.getEmail() + ">";
+      connection.write(line, message -> {
+        if (log.isDebugEnabled()) {
+          wrottern.getAndAdd(line.length());
+        }
         if (StatusCode.isStatusOk(message)) {
           log.debug("RCPT TO result: " + message);
           mailResult.getRecipients().add(toAddr.getEmail());
@@ -176,7 +187,10 @@ class SMTPSendMail {
 
   private void dataCmd() {
     connection.write("DATA", message -> {
-      log.debug("DATA result: " + message);
+      if (log.isDebugEnabled()) {
+        wrottern.getAndAdd(4);
+        log.debug("DATA result: " + message);
+      }
       if (StatusCode.isStatusOk(message)) {
         sendMaildata();
       } else {
@@ -187,58 +201,102 @@ class SMTPSendMail {
   }
 
   private void sendMaildata() {
-    // create the message here if it hasn't been created
-    // for the size check above
-    createMailMessage();
-
-    sendLineByLine(0, mailMessage.length());
-  }
-
-  private void sendLineByLine(int index, int length) {
-    while (index < length) {
-      int nextIndex = mailMessage.indexOf('\n', index);
-      String line;
-      if (nextIndex == -1) {
-        line = mailMessage.substring(index);
-        nextIndex = length;
-      } else {
-        line = mailMessage.substring(index, nextIndex);
-        nextIndex++;
-      }
-      if (line.startsWith(".")) {
-        line = "." + line;
-      }
-      final int nextIndexFinal = nextIndex;
-      final boolean mayLog = nextIndex < 1000;
-      if (connection.writeQueueFull()) {
-        connection.writeLineWithDrainHandler(line, mayLog, v -> sendLineByLine(nextIndexFinal, length));
-        // call to our handler will finish the whole message, we just return here
-        return;
-      } else {
-        connection.writeLine(line, mayLog);
-        index = nextIndex;
-      }
-    }
-    connection.write(".", message -> {
-      log.debug("maildata result: " + message);
+    sendDataOfPart(encodedPart, handlerInContext(v -> connection.write(".", message -> {
       if (StatusCode.isStatusOk(message)) {
         resultHandler.handle(Future.succeededFuture(mailResult));
       } else {
         log.warn("sending data failed: " + message);
         handleError("sending data failed: " + message);
       }
-    });
+    })));
   }
 
-  /**
-   * create message if it hasn't been already
-   */
-  private void createMailMessage() {
-    if (mailMessage == null) {
-      MailEncoder encoder = new MailEncoder(email, hostname);
-      mailMessage = encoder.encode();
-      mailResult.setMessageID(encoder.getMessageID());
+  private void sendDataOfPart(EncodedPart part, Handler<Void> endHandler) {
+    if (isMultiPart(part)) {
+      sendMailHeaders(part);
+      sendMultiPart(part, 0, endHandler);
+    } else {
+      sendRegularPart(part, endHandler);
     }
   }
 
+  private void sendMultiPart(EncodedPart part, int i, Handler<Void> endHandler) {
+    // write boundary start
+    final StringBuilder sb = new StringBuilder("--").append(part.boundary());
+    connection.writeLine(sb.toString(), wrottern.getAndAdd(sb.length()) < 1000);
+    EncodedPart thePart = part.parts().get(i);
+
+    Handler<Void> nextHandler;
+    if (i == part.parts().size() - 1) {
+      // this is the last part
+      nextHandler = v -> {
+        connection.writeLine(sb.append("--").toString(), wrottern.getAndAdd(sb.length()) < 1000);
+        endHandler.handle(null);
+      };
+    } else {
+      // next part to do
+      nextHandler = v -> sendMultiPart(part, i + 1, endHandler);
+    }
+    if (isMultiPart(thePart)) {
+      nextHandler.handle(null);
+    } else {
+      // send single part with the endHandler
+      sendRegularPart(thePart, nextHandler);
+    }
+  }
+
+  private boolean isMultiPart(EncodedPart part) {
+    return part.parts() != null && part.parts().size() > 0;
+  }
+
+  private void sendMailHeaders(EncodedPart part) {
+    for (Map.Entry<String, String> entry: part.headers()) {
+      connection.writeLine(entry.toString(), wrottern.getAndAdd(entry.toString().length()) < 1000);
+    }
+    // send empty line between headers and body
+    connection.writeLine("", wrottern.get() < 1000);
+  }
+
+  private void sendRegularPart(EncodedPart part, Handler<Void> endHandler) {
+    sendMailHeaders(part);
+    if (part.body() != null) {
+      // send body string
+      for (String bodyLine: part.body().split("\n")) {
+        String line = bodyLine.startsWith(".") ? "." + bodyLine : bodyLine;
+        connection.writeLine(line, wrottern.getAndAdd(line.length()) < 1000);
+      }
+      endHandler.handle(null);
+    } else if (part.bodyStream() != null) {
+      writeStream(part.bodyStream(), endHandler);
+    } else {
+      throw new IllegalStateException("No mail body and stream found");
+    }
+  }
+
+  private void writeStream(ReadStream<Buffer> stream, Handler<Void> endHandler) {
+    final int size = 57;
+    final int fetchSize = size * 64;
+    final AtomicReference<Buffer> streamBuffer = new AtomicReference<>(Buffer.buffer());
+    stream.handler(b -> connection.getContext().runOnContext(v -> {
+      Buffer buffer = streamBuffer.get().appendBuffer(b);
+      int start = 0;
+      while(start + size < buffer.length()) {
+        String theLine = Utils.base64(buffer.getBytes(start, start + size));
+        connection.writeLine(theLine, wrottern.getAndAdd(theLine.length()) < 1000);
+        start += size;
+      }
+      streamBuffer.set(buffer.getBuffer(start, buffer.length()));
+      stream.fetch(fetchSize);
+    })).fetch(fetchSize).endHandler(handlerInContext(v -> {
+      if (streamBuffer.get().length() > 0) {
+        String theLine = Utils.base64(streamBuffer.get().getBytes());
+        connection.writeLine(theLine, wrottern.getAndAdd(theLine.length()) < 1000);
+      }
+      endHandler.handle(null);
+    }));
+  }
+
+  private Handler<Void> handlerInContext(Handler<Void> handler) {
+    return vv -> connection.getContext().runOnContext(v -> handler.handle(null));
+  }
 }

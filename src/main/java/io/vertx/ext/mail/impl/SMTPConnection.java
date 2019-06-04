@@ -137,28 +137,12 @@ class SMTPConnection {
       log.debug(str);
     }
     ns.write(str + "\r\n");
-  }
-
-  // write single line not expecting a reply, using drain handler
-  void writeLineWithDrainHandler(String str, boolean mayLog, Handler<Void> handler) {
-    if (mayLog) {
-      log.debug(str);
-    }
     if (ns.writeQueueFull()) {
+      ns.pause();
       ns.drainHandler(v -> {
-        // avoid getting confused by being called twice
-        ns.drainHandler(null);
-        ns.write(str + "\r\n");
-        handler.handle(null);
+        ns.resume();
       });
-    } else {
-      ns.write(str + "\r\n");
-      handler.handle(null);
     }
-  }
-
-  boolean writeQueueFull() {
-    return ns.writeQueueFull();
   }
 
   private void handleError(String message) {
