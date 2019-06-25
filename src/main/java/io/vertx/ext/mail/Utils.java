@@ -28,12 +28,12 @@ import io.vertx.core.json.JsonObject;
  * @author <a href="http://oss.lehmann.cx/">Alexander Lehmann</a>
  *
  */
-class Utils {
+public class Utils {
 
   private Utils() {
   }
 
-  static JsonObject multiMapToJson(final MultiMap headers) {
+  public static JsonObject multiMapToJson(final MultiMap headers) {
     JsonObject json = new JsonObject();
     for (String key : headers.names()) {
       json.put(key, headers.getAll(key));
@@ -41,13 +41,13 @@ class Utils {
     return json;
   }
 
-  static void putIfNotNull(final JsonObject json, final String key, final Object value) {
+  public static void putIfNotNull(final JsonObject json, final String key, final Object value) {
     if (value != null) {
       json.put(key, value);
     }
   }
 
-  static MultiMap jsonToMultiMap(final JsonObject jsonHeaders) {
+  public static MultiMap jsonToMultiMap(final JsonObject jsonHeaders) {
     MultiMap headers = new CaseInsensitiveHeaders();
     for (String key : jsonHeaders.getMap().keySet()) {
       headers.add(key, getKeyAsStringOrList(jsonHeaders, key));

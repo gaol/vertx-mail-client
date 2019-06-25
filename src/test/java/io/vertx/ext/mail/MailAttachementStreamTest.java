@@ -43,7 +43,7 @@ public class MailAttachementStreamTest extends SMTPTestWiser {
     MailMessage message = exampleMessage().setText(text);
     String path = "log4j.properties";
     Buffer buffer = vertx.fileSystem().readFileBlocking(path);
-    MailAttachment attachment = new MailAttachment().setContentType("text/plain").setName("file").setData(buffer);
+    MailAttachment attachment = MailAttachment.create().setContentType("text/plain").setName("file").setData(buffer);
     message.setAttachment(attachment);
     testSuccess(mailClientLogin(), message, () -> {
       final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
@@ -60,7 +60,7 @@ public class MailAttachementStreamTest extends SMTPTestWiser {
     MailMessage message = exampleMessage().setText(text);
     List<MailAttachment> list = new ArrayList<MailAttachment>();
     Buffer image = vertx.fileSystem().readFileBlocking("logo-white-big.png");
-    list.add(new MailAttachment()
+    list.add(MailAttachment.create()
       .setData(Buffer.buffer(image.getBytes()))
       .setName("logo-white-big.png")
       .setContentType("image/png")
@@ -69,7 +69,7 @@ public class MailAttachementStreamTest extends SMTPTestWiser {
 
     String path = "log4j.properties";
     Buffer logFile = vertx.fileSystem().readFileBlocking(path);
-    list.add(new MailAttachment()
+    list.add(MailAttachment.create()
       .setData(logFile)
       .setName(path)
       .setContentType("text/plain")
@@ -93,7 +93,7 @@ public class MailAttachementStreamTest extends SMTPTestWiser {
     MailMessage message = exampleMessage().setText(text);
     String path = "log4j.properties";
     Buffer buffer = vertx.fileSystem().readFileBlocking(path);
-    MailAttachment attachment = new MailAttachment()
+    MailAttachment attachment = MailAttachment.create()
       .setContentType("text/plain")
       .setName("file")
       .setStream(vertx.fileSystem().openBlocking(path, new OpenOptions()));
@@ -114,7 +114,7 @@ public class MailAttachementStreamTest extends SMTPTestWiser {
     List<MailAttachment> list = new ArrayList<MailAttachment>();
     String imgPath = "logo-white-big.png";
     Buffer image = vertx.fileSystem().readFileBlocking(imgPath);
-    list.add(new MailAttachment()
+    list.add(MailAttachment.create()
       .setStream(vertx.fileSystem().openBlocking(imgPath, new OpenOptions()))
       .setName(imgPath)
       .setContentType("image/png")
@@ -123,7 +123,7 @@ public class MailAttachementStreamTest extends SMTPTestWiser {
 
     String path = "log4j.properties";
     Buffer logFile = vertx.fileSystem().readFileBlocking(path);
-    list.add(new MailAttachment()
+    list.add(MailAttachment.create()
       .setStream(vertx.fileSystem().openBlocking(path, new OpenOptions()))
       .setName(path)
       .setContentType("text/plain")

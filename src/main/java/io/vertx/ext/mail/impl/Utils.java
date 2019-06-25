@@ -16,12 +16,14 @@
 
 package io.vertx.ext.mail.impl;
 
+import io.vertx.core.MultiMap;
+import io.vertx.core.http.CaseInsensitiveHeaders;
+import io.vertx.core.json.JsonArray;
+import io.vertx.core.json.JsonObject;
+
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 /**
  * @author <a href="http://oss.lehmann.cx/">Alexander Lehmann</a>
@@ -80,6 +82,18 @@ final class Utils {
       // like [192.168.1.1] or [127.0.0.1]
       return "localhost";
     }
+  }
+
+  static void putIfNotNull(final JsonObject json, final String key, final Object value) {
+    io.vertx.ext.mail.Utils.putIfNotNull(json, key, value);
+  }
+
+  static JsonObject multiMapToJson(final MultiMap headers) {
+    return io.vertx.ext.mail.Utils.multiMapToJson(headers);
+  }
+
+  static MultiMap jsonToMultiMap(final JsonObject jsonHeaders) {
+    return io.vertx.ext.mail.Utils.jsonToMultiMap(jsonHeaders);
   }
 
 }
