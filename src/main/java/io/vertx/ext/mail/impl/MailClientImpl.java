@@ -25,6 +25,11 @@ import io.vertx.ext.mail.MailClient;
 import io.vertx.ext.mail.MailConfig;
 import io.vertx.ext.mail.MailMessage;
 import io.vertx.ext.mail.MailResult;
+import io.vertx.ext.mail.impl.dkim.DKIMSigner;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * MailClient implementation for sending mails inside the local JVM
@@ -47,11 +52,20 @@ public class MailClientImpl implements MailClient {
 
   private volatile boolean closed = false;
 
+  // DKIMSigners may be initialized in the constructor to reuse on each send.
+  // the constructor may throw IllegalStateException because of wrong DKIM configuration.
+  private final List<DKIMSigner> dkimSigners;
+
   public MailClientImpl(Vertx vertx, MailConfig config, String poolName) {
     this.vertx = vertx;
     this.config = config;
     this.holder = lookupHolder(poolName, config);
     this.connectionPool = holder.pool();
+    if (config != null && config.isEnableDKIM() && config.getDkimSignOptions() != null) {
+      dkimSigners = config.getDkimSignOptions().stream().map(DKIMSigner::new).collect(Collectors.toList());
+    } else {
+      dkimSigners = Collections.emptyList();
+    }
   }
 
   @Override
@@ -111,7 +125,7 @@ public class MailClientImpl implements MailClient {
 
   private void sendMessage(MailMessage email, SMTPConnection conn, Handler<AsyncResult<MailResult>> resultHandler,
       Context context) {
-    new SMTPSendMail(conn, email, config, hostname, result -> {
+    new SMTPSendMail(conn, email, config, hostname, dkimSigners, result -> {
       if (result.succeeded()) {
         conn.returnToPool();
       } else {

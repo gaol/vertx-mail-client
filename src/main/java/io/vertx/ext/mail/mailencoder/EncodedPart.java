@@ -22,6 +22,11 @@ import io.vertx.core.streams.ReadStream;
 
 import java.util.List;
 
+/**
+ * This is implementation detail class. It is not intended to be used outside of this mail client.
+ *
+ * @author <a href="mailto: aoingl@gmail.com">Lin Gao</a>
+ */
 public abstract class EncodedPart {
   MultiMap headers;
   String part;

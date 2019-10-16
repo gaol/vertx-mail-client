@@ -18,8 +18,8 @@ package io.vertx.ext.mail.mailencoder;
 
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.CaseInsensitiveHeaders;
-import io.vertx.core.logging.Logger;
-import io.vertx.core.logging.LoggerFactory;
+import io.vertx.core.impl.logging.Logger;
+import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.streams.ReadStream;
 import io.vertx.ext.mail.MailAttachment;
 
@@ -29,7 +29,7 @@ class AttachmentPart extends EncodedPart {
 
   private final MailAttachment attachment;
 
-  public AttachmentPart(MailAttachment attachment) {
+  AttachmentPart(MailAttachment attachment) {
     this.attachment = attachment;
     if (this.attachment.getData() == null && this.attachment.getStream() == null) {
       throw new IllegalArgumentException("Either data or stream of the attachment cannot be null");
