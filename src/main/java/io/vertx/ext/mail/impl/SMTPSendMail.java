@@ -17,10 +17,7 @@
 package io.vertx.ext.mail.impl;
 
 import io.vertx.codegen.annotations.Nullable;
-import io.vertx.core.AsyncResult;
-import io.vertx.core.Future;
-import io.vertx.core.Handler;
-import io.vertx.core.Promise;
+import io.vertx.core.*;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.impl.NoStackTraceThrowable;
 import io.vertx.core.impl.logging.Logger;
@@ -29,6 +26,7 @@ import io.vertx.core.streams.ReadStream;
 import io.vertx.ext.mail.MailConfig;
 import io.vertx.ext.mail.MailMessage;
 import io.vertx.ext.mail.MailResult;
+import io.vertx.ext.mail.impl.dkim.DKIMSigner;
 import io.vertx.ext.mail.mailencoder.EmailAddress;
 import io.vertx.ext.mail.mailencoder.EncodedPart;
 import io.vertx.ext.mail.mailencoder.MailEncoder;
@@ -39,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 class SMTPSendMail {
 
@@ -51,8 +50,9 @@ class SMTPSendMail {
   private final MailResult mailResult;
   private final EncodedPart encodedPart;
   private final AtomicLong written = new AtomicLong();
+  private final List<DKIMSigner> dkimSigners;
 
-  SMTPSendMail(SMTPConnection connection, MailMessage email, MailConfig config, String hostname, Handler<AsyncResult<MailResult>> resultHandler) {
+  SMTPSendMail(SMTPConnection connection, MailMessage email, MailConfig config, String hostname, List<DKIMSigner> dkimSigners, Handler<AsyncResult<MailResult>> resultHandler) {
     this.connection = connection;
     this.email = email;
     this.config = config;
@@ -61,6 +61,7 @@ class SMTPSendMail {
     final MailEncoder encoder = new MailEncoder(email, hostname);
     this.encodedPart = encoder.encodeMail();
     this.mailResult.setMessageID(encoder.getMessageID());
+    this.dkimSigners = dkimSigners;
   }
 
   void start() {
@@ -221,21 +222,52 @@ class SMTPSendMail {
     };
   }
 
-  private void sendMaildata(Promise<Void> promise) {
-    final EncodedPart part = this.encodedPart;
-    if (isMultiPart(part)) {
-      Promise<Void> mailHeaderPromise = Promise.promise();
-      mailHeaderPromise.future().setHandler(v -> {
-        if (v.succeeded()) {
-          sendMultiPart(part, 0, promise);
+  private Future<Void> dkimFuture() {
+    Promise<Void> promise = Promise.promise();
+    if (dkimSigners.isEmpty()) {
+      promise.complete();
+    } else {
+      List<Future> dkimFutures = new ArrayList<>();
+      // run dkim sign, and add email header after that.
+      dkimSigners.forEach(dkim -> dkimFutures.add(dkim.signEmail(connection.getContext(), this.encodedPart)));
+      CompositeFuture.all(dkimFutures).setHandler(r -> {
+        if (r.succeeded()) {
+          try {
+            List<String> dkimHeaders = dkimFutures.stream().map(f -> f.result().toString()).collect(Collectors.toList());
+            this.encodedPart.headers().add(DKIMSigner.DKIM_SIGNATURE_HEADER, dkimHeaders);
+          } finally {
+            promise.complete();
+          }
         } else {
-          promise.fail(v.cause());
+          promise.fail(r.cause());
         }
       });
-      sendMailHeaders(part.headers().entries(), 0, mailHeaderPromise);
-    } else {
-      sendRegularPart(part, promise);
     }
+    return promise.future();
+  }
+
+  private void sendMaildata(Promise<Void> promise) {
+    dkimFuture().setHandler(r -> {
+      if (r.succeeded()) {
+        // send data, dkim headers are added
+        final EncodedPart part = this.encodedPart;
+        if (isMultiPart(part)) {
+          Promise<Void> mailHeaderPromise = Promise.promise();
+          mailHeaderPromise.future().setHandler(v -> {
+            if (v.succeeded()) {
+              sendMultiPart(part, 0, promise);
+            } else {
+              promise.fail(v.cause());
+            }
+          });
+          sendMailHeaders(part.headers().entries(), 0, mailHeaderPromise);
+        } else {
+          sendRegularPart(part, promise);
+        }
+      } else {
+        promise.fail(r.cause());
+      }
+    });
   }
 
   private void sendMultiPart(EncodedPart multiPart, final int i, Promise<Void> promise) {

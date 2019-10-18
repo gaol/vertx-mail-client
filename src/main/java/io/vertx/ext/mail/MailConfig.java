@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * represents the configuration of a mail service with mail server hostname,
@@ -145,7 +146,9 @@ public class MailConfig {
     disableEsmtp = other.disableEsmtp;
     userAgent = other.userAgent;
     enableDKIM = other.enableDKIM;
-    dkimSignOptions = other.dkimSignOptions;
+    if (other.dkimSignOptions != null && !other.dkimSignOptions.isEmpty()) {
+      dkimSignOptions = other.dkimSignOptions.stream().map(DKIMSignOptions::new).collect(Collectors.toList());
+    }
   }
 
   /**

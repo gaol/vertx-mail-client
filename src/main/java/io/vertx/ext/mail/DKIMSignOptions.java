@@ -64,6 +64,29 @@ public class DKIMSignOptions {
     signedHeaders = new ArrayList<>(DEFAULT_HEADERS);
   }
 
+  public DKIMSignOptions (DKIMSignOptions other) {
+    if (other.pubSecKeyOptions != null) {
+      pubSecKeyOptions = new PubSecKeyOptions(other.pubSecKeyOptions);
+    }
+    signAlgo = other.signAlgo;
+    if (other.signedHeaders != null && !other.signedHeaders.isEmpty()) {
+      signedHeaders = new ArrayList<>(other.signedHeaders);
+    } else {
+      signedHeaders = new ArrayList<>(DEFAULT_HEADERS);
+    }
+    sdid = other.sdid;
+    auid = other.auid;
+    selector = other.selector;
+    headerCanonic = other.headerCanonic;
+    bodyCanonic = other.bodyCanonic;
+    bodyLimit = other.bodyLimit;
+    signatureTimestmap = other.signatureTimestmap;
+    expireTime = other.expireTime;
+    if (other.copiedHeaders != null && !other.copiedHeaders.isEmpty()) {
+      copiedHeaders = new ArrayList<>(other.copiedHeaders);
+    }
+  }
+
   /**
    * Constructor from a JsonObject.
    *

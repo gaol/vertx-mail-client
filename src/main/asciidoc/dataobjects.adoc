@@ -92,8 +92,6 @@ set if ESMTP should be tried as first command (EHLO)
  in that way, the property has to be set to false.
  <p>
 +++
-|[[enabledSecureTransportProtocols]]`@enabledSecureTransportProtocols`|`Array of String`|+++
-Sets the list of enabled SSL/TLS protocols.
 |[[dkimOptions]]`@dkimOptions`|`Array of link:dataobjects.html#DKIMSignOptions[DKIMSignOptions]`|+++
 Adds a DKIMSignOptions.
 +++
@@ -102,6 +100,9 @@ Sets DKIMSignOptions.
 +++
 |[[enableDKIM]]`@enableDKIM`|`Boolean`|+++
 Sets true to enable DKIM Signatures, sets false to disable it.
++++
+|[[enabledSecureTransportProtocols]]`@enabledSecureTransportProtocols`|`Array of String`|+++
+Sets the list of enabled SSL/TLS protocols.
 +++
 |[[hostname]]`@hostname`|`String`|+++
 Set the hostname of the smtp server.
