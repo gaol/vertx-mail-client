@@ -141,12 +141,13 @@ public class DKIMSigner {
     context.executeBlocking(bodyHashing(encodedMessage), bhr -> {
       if (bhr.succeeded()) {
         String bh = bhr.result();
+        System.err.println("DKIM Body HASH: " + bh);
         final StringBuilder dkimTagListBuilder = dkimTagList(encodedMessage).append("bh=").append(bh).append("; b=");
         String dkimSignHeaderCanonic = canonicHeader(DKIM_SIGNATURE_HEADER, dkimTagListBuilder.toString());
         final StringBuilder tobeSigned = headersToSign(encodedMessage).append(dkimSignHeaderCanonic);
         try {
           signatureService.update(tobeSigned.toString().getBytes());
-          dkimTagListBuilder.append(Base64.getEncoder().encodeToString(signatureService.sign()));
+          dkimTagListBuilder.append(Base64.getEncoder().encodeToString(signatureService.sign()).replaceAll("[\r\n]+", "\r\n\t"));
           promise.complete(dkimTagListBuilder.toString());
         } catch (SignatureException e) {
           logger.warn("Failed to sign the email", e);
@@ -160,7 +161,7 @@ public class DKIMSigner {
     return promise.future();
   }
 
-  private String CRLF(String body) {
+  public static String CRLF(String body) {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     try (CRLFOutputStream crlfos = new CRLFOutputStream(baos)) {
       crlfos.write(body.getBytes());
@@ -368,18 +369,21 @@ public class DKIMSigner {
     }
   }
 
+  // used for head canonic only
   private String unFolded(String string) {
     return string.replaceAll("\r\n", "");
   }
 
   private String compressWSP(String string) {
-    return string.replaceAll("[\\t ]+", " ");
+    return string.replaceAll("[\t ]+", " ");
   }
 
+  // used for body hashing only
   private String stripTrailingWSP(String string) {
-    return string.replaceAll("[\\t ]+\r\n", "\r\n");
+    return string.replaceAll("[\t ]+\r\n", "\r\n");
   }
 
+  // used for body hashing only
   private String stripTrailingLines(String string) {
     if (string.length() < 2 || !"\r\n".equals(string.substring(string.length() - 2))) {
       return string + "\r\n";

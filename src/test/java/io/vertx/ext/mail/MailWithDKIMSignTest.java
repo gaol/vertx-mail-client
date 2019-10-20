@@ -16,25 +16,29 @@
 
 package io.vertx.ext.mail;
 
+import io.vertx.core.buffer.Buffer;
 import io.vertx.ext.auth.HashingStrategy;
 import io.vertx.ext.auth.PubSecKeyOptions;
 import io.vertx.ext.mail.impl.dkim.DKIMSigner;
 import io.vertx.ext.unit.TestContext;
 import io.vertx.ext.unit.junit.VertxUnitRunner;
+import org.apache.james.jdkim.DKIMVerifier;
+import org.apache.james.jdkim.MockPublicKeyRecordRetriever;
+import org.apache.james.jdkim.api.PublicKeyRecordRetriever;
+import org.apache.james.jdkim.api.SignatureRecord;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import javax.mail.internet.MimeMessage;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.Signature;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.X509EncodedKeySpec;
-import java.util.Arrays;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Test sending mails with DKIM enabled.
@@ -65,6 +69,9 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     "zELHKcoazGIc2vPYz98jEYyBDycYkM3jIBh00In4gXwftmvPefWJAaDiWbqGNEzh\n" +
     "Mgfi5t49NNAeHr7EXQIDAQAB";
 
+  private static final String TEXT_BODY = "This is a Multiple Lines Text\n\n.Some lines start with one dot\n..Some" +
+    "lines start with 2 dots.\n.\t..Some lines start with dot and HT.\n";
+
   private Signature verifier = null;
   {
     try {
@@ -89,18 +96,69 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   }
 
   @Test
-  public void testMailRelaxedRelaxedPlain(TestContext testContext) {
+  public void testMailSimpleSimplePlain(TestContext testContext) {
     this.testContext = testContext;
-    String text = "Message Body";
-    MailMessage message = exampleMessage().setText(text).setSubject("relaxed/relaxed plain text email");
+    MailMessage message = exampleMessage().setText(TEXT_BODY);
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
-      .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.RELAXED);
+      .setHeaderCanonic(MessageCanonic.SIMPLE).setBodyCanonic(MessageCanonic.SIMPLE);
+    String originalTextHash = hashingStrategy.get(DKIMSignAlgorithm.RSA_SHA256.getHashAlgorithm()).hash(null, TEXT_BODY);
+    System.out.println("Original Text Body Hash: " + originalTextHash);
     testSuccess(dkimMailClient(dkimOps), message, () -> {
-      testDKIMSign(dkimOps, message, testContext);
+      testDKIMSign(dkimOps, testContext);
     });
   }
 
-  private void testDKIMSign(DKIMSignOptions dkimOps, MailMessage message, TestContext ctx) throws Exception {
+  @Test
+  public void testMailSimpleRelaxedPlain(TestContext testContext) {
+    this.testContext = testContext;
+    MailMessage message = exampleMessage().setText(TEXT_BODY);
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
+      .setHeaderCanonic(MessageCanonic.SIMPLE).setBodyCanonic(MessageCanonic.RELAXED);
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      testDKIMSign(dkimOps, testContext);
+    });
+  }
+
+  @Test
+  public void testMailRelaxedRelaxedPlain(TestContext testContext) {
+    this.testContext = testContext;
+    MailMessage message = exampleMessage().setText(TEXT_BODY);
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
+      .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.RELAXED);
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      testDKIMSign(dkimOps, testContext);
+    });
+  }
+
+  @Test
+  public void testMailRelaxedSimplePlain(TestContext testContext) {
+    this.testContext = testContext;
+    MailMessage message = exampleMessage().setText(TEXT_BODY);
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
+      .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.SIMPLE);
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      testDKIMSign(dkimOps, testContext);
+    });
+  }
+
+
+  @Test
+//  @Ignore
+  public void testMailRelaxedRelaxedAttachment(TestContext testContext) {
+    this.testContext = testContext;
+    Buffer img = vertx.fileSystem().readFileBlocking("logo-white-big.png");
+    testContext.assertTrue(img.length() > 0);
+    MailAttachment attachment = MailAttachment.create().setName("logo-white-big.png").setData(img);
+    MailMessage message = exampleMessage().setText(TEXT_BODY).setAttachment(attachment);
+
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
+      .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.RELAXED);
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+//      testDKIMSign(dkimOps, testContext);
+    });
+  }
+
+  private void testDKIMSign(DKIMSignOptions dkimOps, TestContext ctx) throws Exception {
     MimeMessage mimeMessage = wiser.getMessages().get(0).getMimeMessage();
     String dkimSignTagsList = mimeMessage.getHeader(DKIMSigner.DKIM_SIGNATURE_HEADER)[0];
     ctx.assertNotNull(dkimSignTagsList);
@@ -122,9 +180,17 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
   private void testWholeSignature(DKIMSignOptions dkimOps, String bh, String b, MimeMessage msg, TestContext ctx) throws Exception {
     //TODO
+
   }
 
   private void testBodyHash(DKIMSignOptions dkimOps, String bodyHash, MimeMessage msg, TestContext ctx) throws Exception {
+    MockPublicKeyRecordRetriever recordRetriever = new MockPublicKeyRecordRetriever();
+    recordRetriever.addRecord("lgao", "example.com", pubKeyStr);
+    DKIMVerifier dkimVerifier = new DKIMVerifier(recordRetriever);
+    List<SignatureRecord> records =  dkimVerifier.verify(msg.getRawInputStream());
+    SignatureRecord record = records.get(0);
+    System.out.println("JAMES: " + Base64.getEncoder().encodeToString(record.getBodyHash()));
+
     String hash = calculateHash(msg.getRawInputStream());
     System.out.println("hash in header: " + bodyHash);
     System.out.println("hash by calculate: " + hash);
@@ -135,9 +201,14 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     MessageDigest md = MessageDigest.getInstance("sha-256");
     int nRead;
     byte[] buffer = new byte[512];
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
     while ((nRead = inputStream.read(buffer, 0, buffer.length)) != -1) {
       md.update(buffer, 0, nRead);
+      out.write(buffer, 0, nRead);
     }
+    System.out.println("Got message body by RawInputStream: ===\n" + out.toString() + "====");
+    String originalTextHash = hashingStrategy.get(DKIMSignAlgorithm.RSA_SHA256.getHashAlgorithm()).hash(null, out.toString());
+    System.out.println("Hash for the RawInputstream: " + originalTextHash);
     return Base64.getEncoder().encodeToString(md.digest());
   }
 

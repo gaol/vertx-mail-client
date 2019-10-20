@@ -36,6 +36,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
@@ -327,33 +328,14 @@ class SMTPSendMail {
     }
   }
 
-  private void sendBodyLineByLine(String[] lines, int i, Promise<Void> promise) {
-    if (i < lines.length) {
-      String line = lines[i];
-      if (line.startsWith(".")) {
-        line = "." + line;
-      }
-      Promise<Void> writeLinePromise = Promise.promise();
-      connection.writeLineWithDrainPromise(line, written.getAndAdd(line.length()) < 1000, writeLinePromise);
-      writeLinePromise.future().setHandler(v -> {
-        if (v.succeeded()) {
-          sendBodyLineByLine(lines, i + 1, promise);
-        } else {
-          promise.fail(v.cause());
-        }
-      });
-    } else {
-      promise.complete();
-    }
-  }
-
   private void sendRegularPart(EncodedPart part, Promise<Void> promise) {
     Promise<Void> bodyPromise = Promise.promise();
     bodyPromise.future().setHandler(v -> {
       if (v.succeeded()) {
         if (part.body() != null) {
           // send body string line by line
-          sendBodyLineByLine(part.body().split("\n"), 0, promise);
+          StringBodyReadStream bodyReadStream = new StringBodyReadStream(part.body());
+          bodyReadStream.pipe().endOnComplete(false).to(connection.getSocket(), promise);
         } else if (part.bodyStream() != null) {
           // send attachment ReadStream as Base64 encoding
           BodyReadStream bodyReadStream = new BodyReadStream(part.bodyStream());
@@ -370,6 +352,71 @@ class SMTPSendMail {
 
   private Handler<Void> handlerInContext(Handler<Void> handler) {
     return vv -> connection.getContext().runOnContext(handler);
+  }
+
+  private class StringBodyReadStream implements ReadStream<Buffer> {
+    private final Buffer buffer;
+    private AtomicBoolean ended = new AtomicBoolean(false);
+    private Handler<Throwable> exceptionHandler;
+    private Handler<Void> endHandler;
+
+    private StringBodyReadStream(String body) {
+      Buffer buffer = Buffer.buffer();
+      for (String line: DKIMSigner.CRLF(body).split("\r\n")) {
+        if (line.startsWith(".")) {
+          // transport level, does not count on DKIM
+          line = "." + line;
+        }
+        buffer.appendString(line).appendString("\r\n");
+      }
+      this.buffer = buffer;
+    }
+
+    @Override
+    public synchronized ReadStream<Buffer> exceptionHandler(Handler<Throwable> handler) {
+      Objects.requireNonNull(handler);
+      this.exceptionHandler = handler;
+      return this;
+    }
+
+    @Override
+    public synchronized ReadStream<Buffer> handler(@Nullable Handler<Buffer> handler) {
+      try {
+        handler.handle(buffer);
+        if (ended.compareAndSet(false, true) && this.endHandler != null) {
+          this.endHandler.handle(null);
+        }
+      } catch (Exception e) {
+        if (this.exceptionHandler != null) {
+          this.exceptionHandler.handle(e);
+        }
+      }
+      return this;
+    }
+
+    @Override
+    public ReadStream<Buffer> pause() {
+      return this;
+    }
+
+    @Override
+    public ReadStream<Buffer> resume() {
+      return this;
+    }
+
+    @Override
+    public ReadStream<Buffer> fetch(long amount) {
+      return this;
+    }
+
+    @Override
+    public synchronized ReadStream<Buffer> endHandler(@Nullable Handler<Void> endHandler) {
+      this.endHandler = endHandler;
+      if (ended.get() && this.endHandler != null) {
+        this.endHandler.handle(null);
+      }
+      return this;
+    }
   }
 
   // what we need: strings line by line with CRLF as line terminator

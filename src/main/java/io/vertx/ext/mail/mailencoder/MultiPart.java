@@ -27,7 +27,8 @@ class MultiPart extends EncodedPart {
 
   public MultiPart(List<EncodedPart> parts, String mode, String userAgent) {
     this.parts = parts;
-    this.boundary = Utils.generateBoundary(userAgent);
+//    this.boundary = Utils.generateBoundary(userAgent);
+    this.boundary = "test-fixed-boundary";
 
     headers = new CaseInsensitiveHeaders();
     headers.set("Content-Type", "multipart/" + mode + "; boundary=\"" + boundary + "\"");
@@ -44,11 +45,9 @@ class MultiPart extends EncodedPart {
     sb.append("\n");
     if (part.parts() != null) {
       for(EncodedPart thePart: part.parts()) {
-        sb.append("--");
-        sb.append(part.boundary());
-        sb.append("\n");
+        sb.append("--").append(part.boundary()).append("\n");
         sb.append(partAsString(thePart));
-        sb.append("\n\n");
+        sb.append("\n");
       }
     } else {
       sb.append(part.body());
@@ -75,4 +74,19 @@ class MultiPart extends EncodedPart {
     return this.boundary;
   }
 
+  // used for DKIM only for now!!
+  @Override
+  public String body() {
+    StringBuilder sb = new StringBuilder("\n");
+    for (EncodedPart part: parts) {
+      sb.append("--").append(this.boundary()).append("\n");
+//      sb.append(part.headers().toString()).append("\n");
+      sb.append(part.body());
+//      sb.append("\n");
+    }
+//    sb.append("\r\n");
+    return sb
+//      .append("\n--").append(this.boundary()).append("--")
+      .toString();
+  }
 }
