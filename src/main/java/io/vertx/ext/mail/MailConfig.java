@@ -21,13 +21,7 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.net.NetClientOptions;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Set;
+import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -656,6 +650,7 @@ public class MailConfig {
    * @return this to be able to use the object fluently
    */
   public MailConfig addDKIMOption(DKIMSignOptions dkimSignOptions) {
+    Objects.requireNonNull(dkimSignOptions);
     if (this.dkimSignOptions == null) {
       this.dkimSignOptions = new ArrayList<>();
     }

@@ -16,9 +16,13 @@
 
 package io.vertx.ext.mail.impl.dkim;
 
+import io.vertx.codegen.annotations.Nullable;
 import io.vertx.core.*;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
+import io.vertx.core.streams.ReadStream;
+import io.vertx.core.streams.WriteStream;
 import io.vertx.ext.auth.HashingAlgorithm;
 import io.vertx.ext.auth.HashingStrategy;
 import io.vertx.ext.mail.DKIMSignOptions;
@@ -34,6 +38,7 @@ import java.security.*;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
@@ -138,7 +143,7 @@ public class DKIMSigner {
    */
   public Future<String> signEmail(Context context, EncodedPart encodedMessage) {
     Promise<String> promise = Promise.promise();
-    context.executeBlocking(bodyHashing(encodedMessage), bhr -> {
+    context.executeBlocking(bodyHashing(context, encodedMessage), bhr -> {
       if (bhr.succeeded()) {
         String bh = bhr.result();
         System.err.println("DKIM Body HASH: " + bh);
@@ -161,28 +166,100 @@ public class DKIMSigner {
     return promise.future();
   }
 
-  public static String CRLF(String body) {
-    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    try (CRLFOutputStream crlfos = new CRLFOutputStream(baos)) {
-      crlfos.write(body.getBytes());
-    } catch (IOException e) {
-      throw new IllegalStateException("The body conversion to MIME canonical CRLF line terminator failed", e);
-    }
-    return baos.toString();
-  }
+//  public static String CRLF(String body) {
+//    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+//    try (CRLFOutputStream crlfos = new CRLFOutputStream(baos)) {
+//      crlfos.write(body.getBytes());
+//    } catch (IOException e) {
+//      throw new IllegalStateException("The body conversion to MIME canonical CRLF line terminator failed", e);
+//    }
+//    return baos.toString();
+//  }
 
   // TODO: maybe a ReadStream for large email body
   // https://tools.ietf.org/html/rfc6376#section-3.7
-  private Handler<Promise<String>> bodyHashing(EncodedPart encodedMessage) {
+  private Handler<Promise<String>> bodyHashing(Context context, EncodedPart encodedMessage) {
     return p -> {
       // running in blocking mode
       try {
-        HashingAlgorithm hashingAlgorithm = hashingStrategy.get(dkimSignOptions.getSignAlgo().getHashAlgorithm());
-        String canonicBody = canonicBody(CRLF(encodedMessage.body()));
-        if (dkimSignOptions.getBodyLimit() > 0) {
-          canonicBody = canonicBody.substring(0, Math.min(dkimSignOptions.getBodyLimit(), canonicBody.length() - 1));
-        }
-        p.complete(hashingAlgorithm.hash(null, canonicBody));
+        ReadStream<Buffer> dkimStream = encodedMessage.dkimBodyStream(context, this.dkimSignOptions);
+        final Buffer buffer = Buffer.buffer();
+        dkimStream.pipe().to(new WriteStream<Buffer>() {
+          private AtomicBoolean ended = new AtomicBoolean(false);
+          private Handler<Throwable> exceptionHandler;
+          private Handler<AsyncResult<Void>> endHandler;
+
+          @Override
+          public WriteStream<Buffer> exceptionHandler(Handler<Throwable> handler) {
+            this.exceptionHandler = handler;
+            return this;
+          }
+
+          @Override
+          public Future<Void> write(Buffer data) {
+            Promise<Void> promise = Promise.promise();
+            write(data, promise);
+            return promise.future();
+          }
+
+          @Override
+          public void write(Buffer data, Handler<AsyncResult<Void>> handler) {
+            System.out.println("Writing: " + data);
+            try {
+              buffer.appendBuffer(data);
+              if (ended.compareAndSet(false, true) && this.endHandler != null) {
+                this.endHandler.handle(null);
+              }
+            } catch (Exception e) {
+              if (handler != null) {
+                handler.handle(Future.failedFuture(e));
+              }
+              if (this.exceptionHandler != null) {
+                this.exceptionHandler.handle(e);
+              }
+            } finally {
+              if (handler != null) {
+                handler.handle(Future.succeededFuture());
+              }
+            }
+          }
+
+          @Override
+          public void end(Handler<AsyncResult<Void>> handler) {
+            this.endHandler = handler;
+            if (ended.get() && this.endHandler != null) {
+              this.endHandler.handle(Future.succeededFuture());
+            }
+          }
+
+          @Override
+          public WriteStream setWriteQueueMaxSize(int maxSize) {
+            return this;
+          }
+
+          @Override
+          public boolean writeQueueFull() {
+            return false;
+          }
+
+          @Override
+          public WriteStream drainHandler(@Nullable Handler<Void> handler) {
+            return this;
+          }
+        }, h -> {
+          if (h.succeeded()) {
+            HashingAlgorithm hashingAlgorithm = hashingStrategy.get(dkimSignOptions.getSignAlgo().getHashAlgorithm());
+//          String canonicBody = canonicBody(CRLF(encodedMessage.body()));
+//          if (dkimSignOptions.getBodyLimit() > 0) {
+//            canonicBody = canonicBody.substring(0, Math.min(dkimSignOptions.getBodyLimit(), canonicBody.length() - 1));
+//          }
+            System.out.println("Body To Hash: ===\n" + buffer.toString() + "\n===");
+            String bh = hashingAlgorithm.hash(null, buffer.toString());
+            p.complete(bh);
+          } else {
+            p.fail(h.cause());
+          }
+        });
       } catch (Exception e) {
         p.fail(e);
       }
@@ -230,7 +307,7 @@ public class DKIMSigner {
     // selector
     dkimSignHeader.append("s=").append(dkimQuotedPrintable(this.dkimSignOptions.getSelector())).append("; ");
     // h=
-    dkimSignHeader.append("h=").append(this.dkimSignOptions.getSignedHeaders().stream().collect(Collectors.joining(":"))).append("; ");
+    dkimSignHeader.append("h=").append(String.join(":", this.dkimSignOptions.getSignedHeaders())).append("; ");
     // optional sign time
     if (this.dkimSignOptions.isSignatureTimestmap() || this.dkimSignOptions.getExpireTime() > 0) {
       long time = new Date().getTime() / 1000; // in seconds
@@ -270,57 +347,57 @@ public class DKIMSigner {
     return dkimQuotedPrintable(value).replaceAll("\\|", "=7C");
   }
 
-  private static class CRLFOutputStream extends FilterOutputStream {
-    private int lastb = -1;
-    private static byte[] newline;
-    static {
-      newline = new byte[2];
-      newline[0] = (byte)'\r';
-      newline[1] = (byte)'\n';
-    }
-
-    CRLFOutputStream(OutputStream os) {
-      super(os);
-    }
-
-    public void write(int b) throws IOException {
-      if (b == '\r') {
-        out.write(newline);
-      } else if (b == '\n') {
-        if (lastb != '\r')
-          out.write(newline);
-      } else {
-        out.write(b);
-      }
-      lastb = b;
-    }
-
-    public void write(byte[] b) throws IOException {
-      write(b, 0, b.length);
-    }
-
-    public void write(byte[] b, int off, int len) throws IOException {
-      int start = off;
-
-      len += off;
-      for (int i = start; i < len ; i++) {
-        if (b[i] == '\r') {
-          out.write(b, start, i - start);
-          out.write(newline);
-          start = i + 1;
-        } else if (b[i] == '\n') {
-          if (lastb != '\r') {
-            out.write(b, start, i - start);
-            out.write(newline);
-          }
-          start = i + 1;
-        }
-        lastb = b[i];
-      }
-      if ((len - start) > 0)
-        out.write(b, start, len - start);
-    }
-  }
+//  private static class CRLFOutputStream extends FilterOutputStream {
+//    private int lastb = -1;
+//    private static byte[] newline;
+//    static {
+//      newline = new byte[2];
+//      newline[0] = (byte)'\r';
+//      newline[1] = (byte)'\n';
+//    }
+//
+//    CRLFOutputStream(OutputStream os) {
+//      super(os);
+//    }
+//
+//    public void write(int b) throws IOException {
+//      if (b == '\r') {
+//        out.write(newline);
+//      } else if (b == '\n') {
+//        if (lastb != '\r')
+//          out.write(newline);
+//      } else {
+//        out.write(b);
+//      }
+//      lastb = b;
+//    }
+//
+//    public void write(byte[] b) throws IOException {
+//      write(b, 0, b.length);
+//    }
+//
+//    public void write(byte[] b, int off, int len) throws IOException {
+//      int start = off;
+//
+//      len += off;
+//      for (int i = start; i < len ; i++) {
+//        if (b[i] == '\r') {
+//          out.write(b, start, i - start);
+//          out.write(newline);
+//          start = i + 1;
+//        } else if (b[i] == '\n') {
+//          if (lastb != '\r') {
+//            out.write(b, start, i - start);
+//            out.write(newline);
+//          }
+//          start = i + 1;
+//        }
+//        lastb = b[i];
+//      }
+//      if ((len - start) > 0)
+//        out.write(b, start, len - start);
+//    }
+//  }
 
 
   /**
@@ -345,7 +422,15 @@ public class DKIMSigner {
     if (this.dkimSignOptions.getHeaderCanonic() == MessageCanonic.SIMPLE) {
       return emailHeaderValue;
     }
-    return compressWSP(unFolded(emailHeaderValue)).trim();
+    return processLine(emailHeaderValue, this.dkimSignOptions.getHeaderCanonic());
+  }
+
+  public static String processLine(String line, MessageCanonic canonic) {
+    if (MessageCanonic.RELAXED == canonic) {
+      line = line.replaceAll("[\r\n\t ]+", " ");
+      line = line.replaceAll("(?m)[\t\r\n ]+$", "");
+    }
+    return line + "\r\n";
   }
 
   /**

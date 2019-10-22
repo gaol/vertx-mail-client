@@ -16,7 +16,6 @@
 
 package io.vertx.ext.mail.impl;
 
-import io.vertx.codegen.annotations.Nullable;
 import io.vertx.core.*;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.impl.NoStackTraceThrowable;
@@ -30,13 +29,10 @@ import io.vertx.ext.mail.impl.dkim.DKIMSigner;
 import io.vertx.ext.mail.mailencoder.EmailAddress;
 import io.vertx.ext.mail.mailencoder.EncodedPart;
 import io.vertx.ext.mail.mailencoder.MailEncoder;
-import io.vertx.ext.mail.mailencoder.Utils;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
@@ -208,6 +204,7 @@ class SMTPSendMail {
 
   private Handler<AsyncResult<Void>> endDotLineHandler() {
     return r -> {
+      System.out.println("End DOT Line @ Thread: " + Thread.currentThread().getName());
       if (r.succeeded()) {
         connection.getContext().runOnContext(v -> connection.write(".", msg -> {
           if (StatusCode.isStatusOk(msg)) {
@@ -251,249 +248,102 @@ class SMTPSendMail {
     dkimFuture().setHandler(r -> {
       if (r.succeeded()) {
         // send data, dkim headers are added
-        final EncodedPart part = this.encodedPart;
-        if (isMultiPart(part)) {
-          Promise<Void> mailHeaderPromise = Promise.promise();
-          mailHeaderPromise.future().setHandler(v -> {
-            if (v.succeeded()) {
-              sendMultiPart(part, 0, promise);
-            } else {
-              promise.fail(v.cause());
-            }
-          });
-          sendMailHeaders(part.headers().entries(), 0, mailHeaderPromise);
-        } else {
-          sendRegularPart(part, promise);
-        }
+        System.out.println("Start pipe the whole email stream..");
+        ReadStream<Buffer> emailStream = encodedPart.stream(this.connection.getContext(), true);
+        emailStream.pipe().endOnComplete(false).to(this.connection.getSocket(), promise);
+
+//        if (isMultiPart(part)) {
+//          Promise<Void> mailHeaderPromise = Promise.promise();
+//          mailHeaderPromise.future().setHandler(v -> {
+//            if (v.succeeded()) {
+//              sendMultiPart(part, 0, promise);
+//            } else {
+//              promise.fail(v.cause());
+//            }
+//          });
+//          sendMailHeaders(part.headers().entries(), 0, mailHeaderPromise);
+//        } else {
+//          sendRegularPart(part, promise);
+//        }
       } else {
         promise.fail(r.cause());
       }
     });
   }
 
-  private void sendMultiPart(EncodedPart multiPart, final int i, Promise<Void> promise) {
-    try {
-      final String boundaryStart = "--" + multiPart.boundary();
-      final EncodedPart thePart = multiPart.parts().get(i);
+//  private void sendMultiPart(EncodedPart multiPart, final int i, Promise<Void> promise) {
+//    try {
+//      final String boundaryStart = "--" + multiPart.boundary();
+//      final EncodedPart thePart = multiPart.parts().get(i);
+//
+//      Promise<Void> boundaryStartPromise = Promise.promise();
+//      boundaryStartPromise.future().setHandler(v -> {
+//        if (v.succeeded()) {
+//          Promise<Void> nextPromise = Promise.promise();
+//          nextPromise.future().setHandler(vv -> {
+//            if (vv.succeeded()) {
+//              if (i == multiPart.parts().size() - 1) {
+//                String boundaryEnd = boundaryStart + "--";
+//                connection.writeLineWithDrainPromise(boundaryEnd, written.getAndAdd(boundaryEnd.length()) < 1000, promise);
+//              } else {
+//                sendMultiPart(multiPart, i + 1, promise);
+//              }
+//            } else {
+//              promise.fail(vv.cause());
+//            }
+//          });
+//          if (isMultiPart(thePart)) {
+//            sendMultiPart(thePart, 0, nextPromise);
+//          } else {
+//            sendRegularPart(thePart, nextPromise);
+//          }
+//        } else {
+//          promise.fail(v.cause());
+//        }
+//      });
+//      connection.writeLineWithDrainPromise(boundaryStart, written.getAndAdd(boundaryStart.length()) < 1000, boundaryStartPromise);
+//    } catch (Exception e) {
+//      promise.fail(e);
+//    }
+//  }
 
-      Promise<Void> boundaryStartPromise = Promise.promise();
-      boundaryStartPromise.future().setHandler(v -> {
-        if (v.succeeded()) {
-          Promise<Void> nextPromise = Promise.promise();
-          nextPromise.future().setHandler(vv -> {
-            if (vv.succeeded()) {
-              if (i == multiPart.parts().size() - 1) {
-                String boundaryEnd = boundaryStart + "--";
-                connection.writeLineWithDrainPromise(boundaryEnd, written.getAndAdd(boundaryEnd.length()) < 1000, promise);
-              } else {
-                sendMultiPart(multiPart, i + 1, promise);
-              }
-            } else {
-              promise.fail(vv.cause());
-            }
-          });
-          if (isMultiPart(thePart)) {
-            sendMultiPart(thePart, 0, nextPromise);
-          } else {
-            sendRegularPart(thePart, nextPromise);
-          }
-        } else {
-          promise.fail(v.cause());
-        }
-      });
-      connection.writeLineWithDrainPromise(boundaryStart, written.getAndAdd(boundaryStart.length()) < 1000, boundaryStartPromise);
-    } catch (Exception e) {
-      promise.fail(e);
-    }
-  }
+//  private boolean isMultiPart(EncodedPart part) {
+//    return part.parts() != null && part.parts().size() > 0;
+//  }
 
-  private boolean isMultiPart(EncodedPart part) {
-    return part.parts() != null && part.parts().size() > 0;
-  }
+//  private void sendMailHeaders(List<Map.Entry<String, String>> headers, int i, Promise<Void> promise) {
+//    if (i < headers.size()) {
+//      String entryString = headers.get(i).toString();
+//      Promise<Void> next = Promise.promise();
+//      next.future().setHandler(v -> {
+//        if (v.succeeded()) {
+//          sendMailHeaders(headers, i + 1, promise);
+//        } else {
+//          promise.fail(v.cause());
+//        }
+//      });
+//      connection.writeLineWithDrainPromise(entryString, written.getAndAdd(entryString.length()) < 1000, next);
+//    } else {
+//      // \r\n between headers and body
+//      connection.writeLineWithDrainPromise("", written.get() < 1000, promise);
+//    }
+//  }
 
-  private void sendMailHeaders(List<Map.Entry<String, String>> headers, int i, Promise<Void> promise) {
-    if (i < headers.size()) {
-      String entryString = headers.get(i).toString();
-      Promise<Void> next = Promise.promise();
-      next.future().setHandler(v -> {
-        if (v.succeeded()) {
-          sendMailHeaders(headers, i + 1, promise);
-        } else {
-          promise.fail(v.cause());
-        }
-      });
-      connection.writeLineWithDrainPromise(entryString, written.getAndAdd(entryString.length()) < 1000, next);
-    } else {
-      connection.writeLineWithDrainPromise("", written.get() < 1000, promise);
-    }
-  }
-
-  private void sendRegularPart(EncodedPart part, Promise<Void> promise) {
-    Promise<Void> bodyPromise = Promise.promise();
-    bodyPromise.future().setHandler(v -> {
-      if (v.succeeded()) {
-        if (part.body() != null) {
-          // send body string line by line
-          StringBodyReadStream bodyReadStream = new StringBodyReadStream(part.body());
-          bodyReadStream.pipe().endOnComplete(false).to(connection.getSocket(), promise);
-        } else if (part.bodyStream() != null) {
-          // send attachment ReadStream as Base64 encoding
-          BodyReadStream bodyReadStream = new BodyReadStream(part.bodyStream());
-          bodyReadStream.pipe().endOnComplete(false).to(connection.getSocket(), promise);
-        } else {
-          promise.fail(new IllegalStateException("No mail body and stream found"));
-        }
-      } else {
-        promise.fail(v.cause());
-      }
-    });
-    sendMailHeaders(part.headers().entries(), 0, bodyPromise);
-  }
-
-  private Handler<Void> handlerInContext(Handler<Void> handler) {
-    return vv -> connection.getContext().runOnContext(handler);
-  }
-
-  private class StringBodyReadStream implements ReadStream<Buffer> {
-    private final Buffer buffer;
-    private AtomicBoolean ended = new AtomicBoolean(false);
-    private Handler<Throwable> exceptionHandler;
-    private Handler<Void> endHandler;
-
-    private StringBodyReadStream(String body) {
-      Buffer buffer = Buffer.buffer();
-      for (String line: DKIMSigner.CRLF(body).split("\r\n")) {
-        if (line.startsWith(".")) {
-          // transport level, does not count on DKIM
-          line = "." + line;
-        }
-        buffer.appendString(line).appendString("\r\n");
-      }
-      this.buffer = buffer;
-    }
-
-    @Override
-    public synchronized ReadStream<Buffer> exceptionHandler(Handler<Throwable> handler) {
-      Objects.requireNonNull(handler);
-      this.exceptionHandler = handler;
-      return this;
-    }
-
-    @Override
-    public synchronized ReadStream<Buffer> handler(@Nullable Handler<Buffer> handler) {
-      try {
-        handler.handle(buffer);
-        if (ended.compareAndSet(false, true) && this.endHandler != null) {
-          this.endHandler.handle(null);
-        }
-      } catch (Exception e) {
-        if (this.exceptionHandler != null) {
-          this.exceptionHandler.handle(e);
-        }
-      }
-      return this;
-    }
-
-    @Override
-    public ReadStream<Buffer> pause() {
-      return this;
-    }
-
-    @Override
-    public ReadStream<Buffer> resume() {
-      return this;
-    }
-
-    @Override
-    public ReadStream<Buffer> fetch(long amount) {
-      return this;
-    }
-
-    @Override
-    public synchronized ReadStream<Buffer> endHandler(@Nullable Handler<Void> endHandler) {
-      this.endHandler = endHandler;
-      if (ended.get() && this.endHandler != null) {
-        this.endHandler.handle(null);
-      }
-      return this;
-    }
-  }
-
-  // what we need: strings line by line with CRLF as line terminator
-  private class BodyReadStream implements ReadStream<Buffer> {
-
-    private final ReadStream<Buffer> stream;
-
-    // 57 / 3 * 4 = 76, plus CRLF is 78, which is the email line length limit.
-    // see: https://tools.ietf.org/html/rfc5322#section-2.1.1
-    private final int size = 57;
-    private Buffer streamBuffer;
-    private Handler<Buffer> handler;
-
-    private BodyReadStream(ReadStream<Buffer> stream) {
-      Objects.requireNonNull(stream, "ReadStream cannot be null");
-      this.stream = stream;
-      this.streamBuffer = Buffer.buffer();
-    }
-
-    @Override
-    public BodyReadStream exceptionHandler(Handler<Throwable> handler) {
-      if (handler != null) {
-        stream.exceptionHandler(handler);
-      }
-      return this;
-    }
-
-    @Override
-    public BodyReadStream handler(@Nullable Handler<Buffer> handler) {
-      if (handler == null) {
-        return this;
-      }
-      this.handler = handler;
-      stream.handler(b -> connection.getContext().runOnContext(v -> {
-        Buffer buffer = streamBuffer.appendBuffer(b);
-        Buffer bufferToSent = Buffer.buffer();
-        int start = 0;
-        while(start + size < buffer.length()) {
-          final String theLine = Utils.base64(buffer.getBytes(start, start + size));
-          bufferToSent.appendBuffer(Buffer.buffer(theLine + "\r\n"));
-          start += size;
-        }
-        streamBuffer = buffer.getBuffer(start, buffer.length());
-        handler.handle(bufferToSent);
-      }));
-      return this;
-    }
-
-    @Override
-    public BodyReadStream pause() {
-      stream.pause();
-      return this;
-    }
-
-    @Override
-    public BodyReadStream resume() {
-      stream.resume();
-      return this;
-    }
-
-    @Override
-    public BodyReadStream fetch(long amount) {
-      stream.fetch(amount);
-      return this;
-    }
-
-    @Override
-    public BodyReadStream endHandler(@Nullable Handler<Void> endHandler) {
-      stream.endHandler(handlerInContext(v -> {
-        if (streamBuffer.length() > 0 && this.handler != null) {
-          String theLine = Utils.base64(streamBuffer.getBytes());
-          this.handler.handle(Buffer.buffer(theLine + "\r\n"));
-        }
-        endHandler.handle(null);
-      }));
-      return this;
-    }
-  }
+//  private void sendRegularPart(EncodedPart part, Promise<Void> promise) {
+//    Promise<Void> bodyPromise = Promise.promise();
+//    bodyPromise.future().setHandler(v -> {
+//      if (v.succeeded()) {
+//        ReadStream<Buffer> bodyStream = part.bodyStream(connection.getContext());
+//        if (bodyStream != null) {
+//          bodyStream.pipe().endOnComplete(false).to(connection.getSocket(), promise);
+//        } else {
+//          promise.fail(new IllegalStateException("No mail body and stream found"));
+//        }
+//      } else {
+//        promise.fail(v.cause());
+//      }
+//    });
+//    sendMailHeaders(part.headers().entries(), 0, bodyPromise);
+//  }
 
 }
