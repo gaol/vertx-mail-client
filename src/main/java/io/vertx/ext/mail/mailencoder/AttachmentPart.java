@@ -23,7 +23,6 @@ import io.vertx.core.http.CaseInsensitiveHeaders;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.streams.ReadStream;
-import io.vertx.core.streams.WriteStream;
 import io.vertx.core.streams.impl.InboundBuffer;
 import io.vertx.ext.mail.DKIMSignOptions;
 import io.vertx.ext.mail.MailAttachment;
@@ -126,54 +125,6 @@ class AttachmentPart extends EncodedPart {
     } else {
       return Future.failedFuture("No data nor stream specified in Attachment");
     }
-  }
-
-  private WriteStream<Buffer> pendingWriteStream(final InboundBuffer<Buffer> pending) {
-    return new WriteStream<Buffer>() {
-      @Override
-      public WriteStream<Buffer> exceptionHandler(Handler<Throwable> handler) {
-        return this;
-      }
-
-      @Override
-      public Future<Void> write(Buffer data) {
-        Promise<Void> promise = Promise.promise();
-        write(data, promise);
-        return promise.future();
-      }
-
-      @Override
-      public void write(Buffer data, Handler<AsyncResult<Void>> handler) {
-        pending.write(data);
-        if (handler != null) {
-          handler.handle(Future.succeededFuture());
-        }
-      }
-
-      @Override
-      public void end(Handler<AsyncResult<Void>> handler) {
-        // end of the stream
-        if (handler != null) {
-          handler.handle(Future.succeededFuture());
-        }
-      }
-
-      @Override
-      public WriteStream<Buffer> setWriteQueueMaxSize(int maxSize) {
-        return this;
-      }
-
-      @Override
-      public boolean writeQueueFull() {
-        return !pending.isWritable();
-      }
-
-      @Override
-      public WriteStream<Buffer> drainHandler(@Nullable Handler<Void> handler) {
-        pending.drainHandler(handler);
-        return this;
-      }
-    };
   }
 
   // what we need: strings line by line with CRLF as line terminator

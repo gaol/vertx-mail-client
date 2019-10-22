@@ -20,6 +20,7 @@ import io.vertx.codegen.annotations.Nullable;
 import io.vertx.core.*;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.streams.ReadStream;
+import io.vertx.core.streams.WriteStream;
 import io.vertx.core.streams.impl.InboundBuffer;
 import io.vertx.ext.mail.DKIMSignOptions;
 import io.vertx.ext.mail.impl.dkim.DKIMSigner;
@@ -91,6 +92,7 @@ public abstract class EncodedPart {
     private final InboundBuffer<Buffer> pending;
     private final Context context;
     private boolean bodyReading;
+    private boolean ended;
 
     private EmailReadStream(Context context, boolean writeHeaders) {
       this.context = context;
@@ -112,7 +114,7 @@ public abstract class EncodedPart {
       Handler<Void> handler;
       boolean ended;
       synchronized (this) {
-        ended = !pending.isPaused() && pending.isEmpty() && bodyReading;
+        ended = this.ended;
         handler = this.endHandler;
       }
       if (ended && handler != null) {
@@ -149,6 +151,7 @@ public abstract class EncodedPart {
           bodyReading = true;
           readBody0(context, pending).setHandler(end -> {
             if (end.succeeded()) {
+              ended = true;
               checkEnd();
             } else {
               checkException(end.cause());
@@ -246,6 +249,54 @@ public abstract class EncodedPart {
 //      }
 //    }
 //    return lines.split("\r\n");
+  }
+
+  protected WriteStream<Buffer> pendingWriteStream(final InboundBuffer<Buffer> pending) {
+    return new WriteStream<Buffer>() {
+      @Override
+      public WriteStream<Buffer> exceptionHandler(Handler<Throwable> handler) {
+        return this;
+      }
+
+      @Override
+      public Future<Void> write(Buffer data) {
+        Promise<Void> promise = Promise.promise();
+        write(data, promise);
+        return promise.future();
+      }
+
+      @Override
+      public void write(Buffer data, Handler<AsyncResult<Void>> handler) {
+        pending.write(data);
+        if (handler != null) {
+          handler.handle(Future.succeededFuture());
+        }
+      }
+
+      @Override
+      public void end(Handler<AsyncResult<Void>> handler) {
+        // end of the stream
+        if (handler != null) {
+          handler.handle(Future.succeededFuture());
+        }
+      }
+
+      @Override
+      public WriteStream<Buffer> setWriteQueueMaxSize(int maxSize) {
+        return this;
+      }
+
+      @Override
+      public boolean writeQueueFull() {
+        return !pending.isWritable();
+      }
+
+      @Override
+      public WriteStream<Buffer> drainHandler(@Nullable Handler<Void> handler) {
+        pending.drainHandler(handler);
+        return this;
+      }
+    };
   }
 
 }
