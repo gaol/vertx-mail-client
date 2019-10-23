@@ -139,13 +139,12 @@ public class DKIMSigner {
     context.executeBlocking(bodyHashing(context, encodedMessage), bhr -> {
       if (bhr.succeeded()) {
         String bh = bhr.result();
-        System.err.println("DKIM Body HASH: " + bh);
+        System.err.println("DKIM Body Hash: " + bh);
         final StringBuilder dkimTagListBuilder = dkimTagList(encodedMessage).append("bh=").append(bh).append("; b=");
         String dkimSignHeaderCanonic = canonicHeader(DKIM_SIGNATURE_HEADER, dkimTagListBuilder.toString());
-        System.err.println("The dkim-signature header: " + dkimSignHeaderCanonic);
         final StringBuilder tobeSigned = headersToSign(encodedMessage).append(dkimSignHeaderCanonic);
         try {
-          System.err.println("To be signed: \n" + tobeSigned);
+          System.err.println("To be signed: ##\n" + tobeSigned + "\n:-##");
           String returnStr;
           synchronized (signatureService) {
             signatureService.update(tobeSigned.toString().getBytes());
@@ -303,7 +302,7 @@ public class DKIMSigner {
    */
   private String canonicHeader(String emailHeaderName, String emailHeaderValue) {
     if (this.dkimSignOptions.getHeaderCanonic() == MessageCanonic.SIMPLE) {
-      return emailHeaderName + ":" + emailHeaderValue;
+      return emailHeaderName + ": " + emailHeaderValue;
     }
     String headerName = emailHeaderName.trim().toLowerCase();
     emailHeaderValue = emailHeaderValue.replaceAll("\r\n[\t ]", " ");

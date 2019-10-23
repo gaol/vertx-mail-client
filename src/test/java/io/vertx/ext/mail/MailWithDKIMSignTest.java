@@ -258,6 +258,7 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     ctx.assertEquals("from@example.com", record.getIdentity());
     ctx.assertEquals("example.com", record.getDToken());
     ctx.assertEquals("sha-256", record.getHashAlgo());
+    System.err.println("Body Hash in Verifier: " + Base64.getEncoder().encodeToString(record.getBodyHash()));
   }
 
 }
