@@ -105,6 +105,24 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   }
 
   @Test
+  public void testMailRelaxedRelaxedPlainWithLimit(TestContext testContext) {
+    this.testContext = testContext;
+    MailMessage message = exampleMessage().setText(TEXT_BODY);
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase).setBodyLimit(20)
+      .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.RELAXED);
+    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+  }
+
+  @Test
+  public void testMailRelaxedSimplePlainWithLimit(TestContext testContext) {
+    this.testContext = testContext;
+    MailMessage message = exampleMessage().setText(TEXT_BODY);
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase).setBodyLimit(20)
+      .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.SIMPLE);
+    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+  }
+
+  @Test
   public void testMailRelaxedSimplePlain(TestContext testContext) {
     this.testContext = testContext;
     MailMessage message = exampleMessage().setText(TEXT_BODY);
@@ -114,7 +132,6 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   }
 
   @Test
-  @Ignore
   public void testMailSimpleSimpleAttachment(TestContext testContext) {
     this.testContext = testContext;
     Buffer img = vertx.fileSystem().readFileBlocking("logo-white-big.png");
@@ -128,7 +145,6 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   }
 
   @Test
-  @Ignore
   public void testMailSimpleRelaxedAttachment(TestContext testContext) {
     this.testContext = testContext;
     Buffer img = vertx.fileSystem().readFileBlocking("logo-white-big.png");
@@ -142,7 +158,6 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   }
 
   @Test
-  @Ignore
   public void testMailRelaxedSimpleAttachment(TestContext testContext) {
     this.testContext = testContext;
     Buffer img = vertx.fileSystem().readFileBlocking("logo-white-big.png");
@@ -156,7 +171,6 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   }
 
   @Test
-  @Ignore
   public void testMailRelaxedRelaxedAttachment(TestContext testContext) {
     this.testContext = testContext;
     Buffer img = vertx.fileSystem().readFileBlocking("logo-white-big.png");
@@ -230,6 +244,7 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   }
 
   private void testDKIMSign(DKIMSignOptions dkimOps, TestContext ctx) throws Exception {
+    wiser.getMessages().get(0).dumpMessage(System.out);
     Message jamesMessage = new Message(new ByteArrayInputStream(wiser.getMessages().get(0).getData()));
     List<String> dkimHeaders = jamesMessage.getFields(DKIMSigner.DKIM_SIGNATURE_HEADER);
     ctx.assertEquals(1, dkimHeaders.size());

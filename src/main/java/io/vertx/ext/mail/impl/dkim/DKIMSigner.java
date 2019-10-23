@@ -21,7 +21,6 @@ import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.ext.auth.HashingAlgorithm;
 import io.vertx.ext.auth.HashingStrategy;
-import io.vertx.ext.mail.DKIMSignAlgorithm;
 import io.vertx.ext.mail.DKIMSignOptions;
 import io.vertx.ext.mail.MessageCanonic;
 import io.vertx.ext.mail.mailencoder.EncodedPart;
@@ -48,6 +47,7 @@ public class DKIMSigner {
   private static final Logger logger = LoggerFactory.getLogger(DKIMSigner.class);
 
   private final DKIMSignOptions dkimSignOptions;
+  private final String signatureTemplate;
   private final HashingStrategy hashingStrategy = HashingStrategy.load();
   private final Signature signatureService;
   private static final Pattern DELIMITER = Pattern.compile("[\r\n]");
@@ -65,6 +65,7 @@ public class DKIMSigner {
   public DKIMSigner(DKIMSignOptions dkimSignOptions) {
     this.dkimSignOptions = dkimSignOptions;
     validate(this.dkimSignOptions);
+    this.signatureTemplate = dkimSignatureTemplate();
     try {
       KeyFactory kf = KeyFactory.getInstance("RSA");
       final PKCS8EncodedKeySpec keyspec = new PKCS8EncodedKeySpec(Base64.getMimeDecoder().decode(dkimSignOptions.getPubSecKeyOptions().getSecretKey()));
@@ -128,6 +129,45 @@ public class DKIMSigner {
     }
   }
 
+  private String dkimSignatureTemplate() {
+    final StringBuilder sb = new StringBuilder();
+    // version is always 1
+    sb.append("v=1; ");
+    // sign algorithm
+    sb.append("a=").append(this.dkimSignOptions.getSignAlgo().getDKIMAlgoName()).append("; ");
+    // optional message canonic
+    MessageCanonic bodyCanonic = this.dkimSignOptions.getBodyCanonic();
+    MessageCanonic headerCanonic = this.dkimSignOptions.getHeaderCanonic();
+    sb.append("c=").append(headerCanonic.getCanonic()).append("/").append(bodyCanonic.getCanonic()).append("; ");
+
+    // sdid
+    sb.append("d=").append(dkimQuotedPrintable(this.dkimSignOptions.getSdid())).append("; ");
+    // optional auid
+    String auid = this.dkimSignOptions.getAuid();
+    if (auid != null) {
+      sb.append("i=").append(dkimQuotedPrintable(auid)).append("; ");
+    }
+    // selector
+    sb.append("s=").append(dkimQuotedPrintable(this.dkimSignOptions.getSelector())).append("; ");
+    // h=
+    String signHeadersString = String.join(":", this.dkimSignOptions.getSignedHeaders());
+    sb.append("h=").append(signHeadersString).append("; ");
+    // body limit
+    if (this.dkimSignOptions.getBodyLimit() > 0) {
+      sb.append("l=").append(this.dkimSignOptions.getBodyLimit()).append("; ");
+    }
+    // optional sign time
+    if (this.dkimSignOptions.isSignatureTimestamp() || this.dkimSignOptions.getExpireTime() > 0) {
+      long time = new Date().getTime() / 1000; // in seconds
+      sb.append("t=").append(time).append("; ");
+      if (this.dkimSignOptions.getExpireTime() > 0) {
+        long expire = time + this.dkimSignOptions.getExpireTime();
+        sb.append("x=").append(expire).append("; ");
+      }
+    }
+    return sb.toString();
+  }
+
   /**
    * Perform the DKIM Signature sign action.
    *
@@ -187,33 +227,97 @@ public class DKIMSigner {
     return line + "\r\n";
   }
 
+  private Future<Void> goThoughtMultiPart(MessageDigest md, EncodedPart multiPart) {
+    Promise<Void> gothrough = Promise.promise();
+    // it is a multipart message, calculate all into buffer for now, even for the ReadStream of the attachment.
+    StringBuilder sb = new StringBuilder();
+    String boundaryStart = "--" + multiPart.boundary() + "\r\n";
+    String boundaryEnd = "--" + multiPart.boundary() + "--";// no \r\n for boundary end
+    for (EncodedPart part: multiPart.parts()) {
+      // boundary start
+//            md.update(("--" + encodedMessage.boundary() + "\r\n").getBytes());
+      // part headers
+      // no headers, just boundary, with some headers ???
+      part.headers().entries().forEach(entry -> {
+//              md.update((entry.toString() + "\r\n").getBytes());
+        sb.append(entry.toString());
+        sb.append("\r\n");
+      });
+      sb.append("\r\n");
+//            md.update("\r\n".getBytes());
+      Scanner scanner = new Scanner(part.body()).useDelimiter(DELIMITER);
+      while (scanner.hasNext()) {
+        sb.append(canonicBodyLine(scanner.nextLine(), dkimSignOptions.getBodyCanonic()));
+      }
+//            String lines = sb.toString().replaceFirst("[\r\n]*$", "\r\n");
+//            md.update(dkimMailBody(part, this.dkimSignOptions).getBytes());
+//            md.update("\r\n".getBytes());
+    }
+    // boundary end
+//          md.update(("--" + encodedMessage.boundary() + "--\r\n").getBytes());
+//    sb.append("--").append(encodedMessage.boundary()).append("--");
+    String str = sb.toString().replaceFirst("[\r\n]*$", "\r\n");
+
+    System.err.println("Multipart Body: ##\n" + str + "\n:-");
+    return gothrough.future();
+  }
+
   // https://tools.ietf.org/html/rfc6376#section-3.7
   private Handler<Promise<String>> bodyHashing(Context context, EncodedPart encodedMessage) {
     return p -> {
       // running in blocking mode
       try {
-        HashingAlgorithm hashingAlgorithm = hashingStrategy.get(dkimSignOptions.getSignAlgo().getHashAlgoId());
         if (encodedMessage.parts() != null && encodedMessage.parts().size() > 0) {
+          final MessageDigest md = MessageDigest.getInstance(dkimSignOptions.getSignAlgo().getHashAlgorithm());
+//          Future<Void> goThroughMultiPart = goThoughtMultiPart(md, encodedMessage);
+//          goThroughMultiPart.setHandler(r -> {
+//            if (r.succeeded()) {
+//              // MD has been updated through reading the whole multipart message.
+//              String bh = Base64.getEncoder().encodeToString(md.digest());
+//              p.complete(bh);
+//            } else {
+//              p.fail(r.cause());
+//            }
+//          });
           // it is a multipart message, calculate all into buffer for now, even for the ReadStream of the attachment.
-          MessageDigest md = MessageDigest.getInstance(dkimSignOptions.getSignAlgo().getHashAlgorithm());
-
+          StringBuilder sb = new StringBuilder();
           for (EncodedPart part: encodedMessage.parts()) {
+            sb.append("--").append(encodedMessage.boundary()).append("\r\n");
             // boundary start
-            md.update(("--" + encodedMessage.boundary()).getBytes());
+//            md.update(("--" + encodedMessage.boundary() + "\r\n").getBytes());
             // part headers
-            md.update(encodedMessage.headers().toString().getBytes());
-            md.update("\r\n".getBytes());
-            md.update(dkimMailBody(part, this.dkimSignOptions).getBytes());
+            // no headers, just boundary, with some headers ???
+            part.headers().entries().forEach(entry -> {
+//              md.update((entry.toString() + "\r\n").getBytes());
+              sb.append(entry.toString());
+              sb.append("\r\n");
+            });
+            sb.append("\r\n");
+//            md.update("\r\n".getBytes());
+            Scanner scanner = new Scanner(part.body()).useDelimiter(DELIMITER);
+            while (scanner.hasNext()) {
+              sb.append(canonicBodyLine(scanner.nextLine(), dkimSignOptions.getBodyCanonic()));
+            }
+//            String lines = sb.toString().replaceFirst("[\r\n]*$", "\r\n");
+//            md.update(dkimMailBody(part, this.dkimSignOptions).getBytes());
+//            md.update("\r\n".getBytes());
           }
           // boundary end
-          md.update(("--" + encodedMessage.boundary() + "--").getBytes());
-          String bh = Base64.getEncoder().encodeToString(md.digest());
+//          md.update(("--" + encodedMessage.boundary() + "--\r\n").getBytes());
+          sb.append("--").append(encodedMessage.boundary()).append("--");
+          String str = sb.toString().replaceFirst("[\r\n]*$", "\r\n");
+
+          System.err.println("Multipart Body: ##\n" + str + "\n:-");
+
+          String bh = Base64.getEncoder().encodeToString(md.digest(str.getBytes()));
+
+          // OWtfKrLL5j73cuO9II7F4KB/1PcOI3G0Ww1+Pu9c0y0=
+          // OWtfKrLL5j73cuO9II7F4KB/1PcOI3G0Ww1+Pu9c0y0=
           System.err.println("Body Hash of Multipart: " + bh);
           p.complete(bh);
         } else {
-          // it is a normal message
+          HashingAlgorithm hashingAlgorithm = hashingStrategy.get(dkimSignOptions.getSignAlgo().getHashAlgoId());
           String canonicBody = dkimMailBody(encodedMessage, this.dkimSignOptions);
-//          System.out.println("Body To Hash: ===\n" + canonicBody + "\n===");
           String bh = hashingAlgorithm.hash(null, canonicBody);
           p.complete(bh);
         }
@@ -243,42 +347,12 @@ public class DKIMSigner {
    * @return the StringBuilder represents the tag list based on the specified {@link DKIMSignOptions}
    */
   private StringBuilder dkimTagList(EncodedPart encodedMessage) {
-    final StringBuilder dkimSignHeader = new StringBuilder();
-    // version is always the first one
-    dkimSignHeader.append("v=1; ");
-    // sign algorithm
-    dkimSignHeader.append("a=").append(this.dkimSignOptions.getSignAlgo().getDKIMAlgoName()).append("; ");
-    // optional message canonic
-    MessageCanonic bodyCanonic = this.dkimSignOptions.getBodyCanonic();
-    MessageCanonic headerCanonic = this.dkimSignOptions.getHeaderCanonic();
-    dkimSignHeader.append("c=").append(headerCanonic.getCanonic()).append("/").append(bodyCanonic.getCanonic()).append("; ");
-
-    // sdid
-    dkimSignHeader.append("d=").append(dkimQuotedPrintable(this.dkimSignOptions.getSdid())).append("; ");
-    // optional auid
-    String auid = this.dkimSignOptions.getAuid();
-    if (auid != null) {
-      dkimSignHeader.append("i=").append(dkimQuotedPrintable(auid)).append("; ");
-    }
-    // selector
-    dkimSignHeader.append("s=").append(dkimQuotedPrintable(this.dkimSignOptions.getSelector())).append("; ");
-    // h=
-    String signHeadersString = String.join(":", this.dkimSignOptions.getSignedHeaders());
-    dkimSignHeader.append("h=").append(signHeadersString).append("; ");
-    // optional sign time
-    if (this.dkimSignOptions.isSignatureTimestamp() || this.dkimSignOptions.getExpireTime() > 0) {
-      long time = new Date().getTime() / 1000; // in seconds
-      dkimSignHeader.append("t=").append(time).append("; ");
-      if (this.dkimSignOptions.getExpireTime() > 0) {
-        long expire = time + this.dkimSignOptions.getExpireTime();
-        dkimSignHeader.append("x=").append(expire).append("; ");
-      }
-    }
+    final StringBuilder dkimTagList = new StringBuilder(this.signatureTemplate);
     // optional copied headers
     if (dkimSignOptions.getCopiedHeaders() != null && dkimSignOptions.getCopiedHeaders().size() > 0) {
-      dkimSignHeader.append("z=").append(copiedHeaders(dkimSignOptions.getCopiedHeaders(), encodedMessage)).append("; ");
+      dkimTagList.append("z=").append(copiedHeaders(dkimSignOptions.getCopiedHeaders(), encodedMessage)).append("; ");
     }
-    return dkimSignHeader;
+    return dkimTagList;
   }
 
   private String copiedHeaders(List<String> headers, EncodedPart encodedMessage) {

@@ -38,7 +38,7 @@ public class DKIMSignOptions {
     DEFAULT_HEADERS.add("From");
     DEFAULT_HEADERS.add("Reply-to");
     DEFAULT_HEADERS.add("Subject");
-//    DEFAULT_HEADERS.add("Date");
+    DEFAULT_HEADERS.add("Date");
     DEFAULT_HEADERS.add("To");
     DEFAULT_HEADERS.add("Cc");
   }
