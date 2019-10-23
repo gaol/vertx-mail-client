@@ -21,6 +21,7 @@ import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.ext.auth.HashingAlgorithm;
 import io.vertx.ext.auth.HashingStrategy;
+import io.vertx.ext.mail.DKIMSignAlgorithm;
 import io.vertx.ext.mail.DKIMSignOptions;
 import io.vertx.ext.mail.MessageCanonic;
 import io.vertx.ext.mail.mailencoder.EncodedPart;
@@ -191,11 +192,24 @@ public class DKIMSigner {
     return p -> {
       // running in blocking mode
       try {
-        HashingAlgorithm hashingAlgorithm = hashingStrategy.get(dkimSignOptions.getSignAlgo().getHashAlgorithm());
+        HashingAlgorithm hashingAlgorithm = hashingStrategy.get(dkimSignOptions.getSignAlgo().getHashAlgoId());
         if (encodedMessage.parts() != null && encodedMessage.parts().size() > 0) {
           // it is a multipart message, calculate all into buffer for now, even for the ReadStream of the attachment.
+          MessageDigest md = MessageDigest.getInstance(dkimSignOptions.getSignAlgo().getHashAlgorithm());
 
-          p.fail("NOT SUPPORT YET for multipart messages!!");
+          for (EncodedPart part: encodedMessage.parts()) {
+            // boundary start
+            md.update(("--" + encodedMessage.boundary()).getBytes());
+            // part headers
+            md.update(encodedMessage.headers().toString().getBytes());
+            md.update("\r\n".getBytes());
+            md.update(dkimMailBody(part, this.dkimSignOptions).getBytes());
+          }
+          // boundary end
+          md.update(("--" + encodedMessage.boundary() + "--").getBytes());
+          String bh = Base64.getEncoder().encodeToString(md.digest());
+          System.err.println("Body Hash of Multipart: " + bh);
+          p.complete(bh);
         } else {
           // it is a normal message
           String canonicBody = dkimMailBody(encodedMessage, this.dkimSignOptions);
@@ -233,7 +247,7 @@ public class DKIMSigner {
     // version is always the first one
     dkimSignHeader.append("v=1; ");
     // sign algorithm
-    dkimSignHeader.append("a=").append(this.dkimSignOptions.getSignAlgo().getAlgorightmName()).append("; ");
+    dkimSignHeader.append("a=").append(this.dkimSignOptions.getSignAlgo().getDKIMAlgoName()).append("; ");
     // optional message canonic
     MessageCanonic bodyCanonic = this.dkimSignOptions.getBodyCanonic();
     MessageCanonic headerCanonic = this.dkimSignOptions.getHeaderCanonic();

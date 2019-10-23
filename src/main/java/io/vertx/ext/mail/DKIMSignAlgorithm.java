@@ -23,38 +23,39 @@ package io.vertx.ext.mail;
  * @author <a href="mailto: aoingl@gmail.com">Lin Gao</a>
  */
 public enum DKIMSignAlgorithm {
-  RSA_SHA1("RS1", "rsa", "sha1"), // rsa-sha1
-  RSA_SHA256("RS256", "rsa", "sha256"); // rsa-sha256
+  RSA_SHA1("sha1", "rsa", "SHA-1"), // rsa-sha1
+  RSA_SHA256("sha256", "rsa", "SHA-256"); // rsa-sha256
 
-  // alias is the same as defined in vertx-auth-common to be able to get defined HashingAlgorithm
-  private String alias;
+  /**
+   * The hash algorithm id used by {@link io.vertx.ext.auth.HashingAlgorithm} to distinguish from others.
+   */
+  private String hashAlgoId;
+
+  /**
+   * The Hash type. It is: <code>rsa</code> now.
+   */
   private String type;
+
+  /**
+   * The actual algorithm that can be used by the {@link java.security.MessageDigest} to calculate the digest.
+   */
   private String hashAlgo;
 
-  DKIMSignAlgorithm(String alias, String type, String hashAlgo) {
-    this.alias = alias;
+  DKIMSignAlgorithm(String hashAlgoId, String type, String hashAlgo) {
+    this.hashAlgoId = hashAlgoId;
     this.type = type;
     this.hashAlgo = hashAlgo;
   }
 
   /**
-   * Gets the algorithm alias.
-   *
-   * @return the algorithm alisa
-   */
-  public String getAlias() {
-    return alias;
-  }
-
-  /**
-   * Gets the algorithm name.
+   * Gets the algorithm name specified by the DKIM specification.
    *
    * See: https://tools.ietf.org/html/rfc6376#section-3.3
    *
    * @return the algorithm name
    */
-  public String getAlgorightmName() {
-    return this.type + "-" + hashAlgo;
+  public String getDKIMAlgoName() {
+    return this.type + "-" + this.hashAlgoId;
   }
 
   /**
@@ -67,12 +68,21 @@ public enum DKIMSignAlgorithm {
   }
 
   /**
+   * Gets the Hash Algorithm ID that can be identified by the {@link io.vertx.ext.auth.HashingStrategy}.
+   *
+   * @return the id of the Hash Algorithm.
+   */
+  public String getHashAlgoId() {
+    return hashAlgoId;
+  }
+
+  /**
    * Gets the Signature Algorithm, like: SHA256withRSA, SHA1withRSA.
    *
    * @return the signature algorithm
    */
   public String getSignatureAlgorithm() {
-    return this.hashAlgo.toUpperCase() + "with" + this.type.toUpperCase();
+    return this.hashAlgoId.toUpperCase() + "with" + this.type.toUpperCase();
   }
 
 }

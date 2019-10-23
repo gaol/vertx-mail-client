@@ -241,7 +241,7 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
       signTags.put(part.substring(0, idx), part.substring(idx + 1));
     });
     ctx.assertEquals("1", signTags.get("v"));
-    ctx.assertEquals(DKIMSignAlgorithm.RSA_SHA256.getAlgorightmName(), signTags.get("a"));
+    ctx.assertEquals(DKIMSignAlgorithm.RSA_SHA256.getDKIMAlgoName(), signTags.get("a"));
     ctx.assertEquals(dkimOps.getHeaderCanonic().getCanonic() + "/" + dkimOps.getBodyCanonic().getCanonic(), signTags.get("c"));
     ctx.assertEquals("example.com", signTags.get("d"));
     ctx.assertEquals("from@example.com", signTags.get("i"));
