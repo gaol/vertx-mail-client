@@ -27,13 +27,11 @@ import org.apache.james.jdkim.DKIMVerifier;
 import org.apache.james.jdkim.MockPublicKeyRecordRetriever;
 import org.apache.james.jdkim.api.SignatureRecord;
 import org.apache.james.jdkim.impl.Message;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import java.io.ByteArrayInputStream;
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Test sending mails with DKIM enabled.
@@ -184,7 +182,6 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   }
 
   @Test
-  @Ignore
   public void testMailSimpleSimpleAttachmentStream(TestContext testContext) {
     this.testContext = testContext;
     String path = "logo-white-big.png";
@@ -199,7 +196,6 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   }
 
   @Test
-  @Ignore
   public void testMailSimpleRelaxedAttachmentStream(TestContext testContext) {
     this.testContext = testContext;
     String path = "logo-white-big.png";
@@ -214,7 +210,6 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   }
 
   @Test
-  @Ignore
   public void testMailRelaxedSimpleAttachmentStream(TestContext testContext) {
     this.testContext = testContext;
     String path = "logo-white-big.png";
@@ -229,7 +224,6 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   }
 
   @Test
-  @Ignore
   public void testMailRelaxedRelaxedAttachmentStream(TestContext testContext) {
     this.testContext = testContext;
     String path = "logo-white-big.png";
@@ -244,7 +238,6 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   }
 
   private void testDKIMSign(DKIMSignOptions dkimOps, TestContext ctx) throws Exception {
-    wiser.getMessages().get(0).dumpMessage(System.out);
     Message jamesMessage = new Message(new ByteArrayInputStream(wiser.getMessages().get(0).getData()));
     List<String> dkimHeaders = jamesMessage.getFields(DKIMSigner.DKIM_SIGNATURE_HEADER);
     ctx.assertEquals(1, dkimHeaders.size());
@@ -261,7 +254,7 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     ctx.assertEquals("example.com", signTags.get("d"));
     ctx.assertEquals("from@example.com", signTags.get("i"));
     ctx.assertEquals("lgao", signTags.get("s"));
-    ctx.assertEquals(dkimOptionsBase.getSignedHeaders().stream().collect(Collectors.joining(":")), signTags.get("h"));
+    ctx.assertEquals(String.join(":", dkimOptionsBase.getSignedHeaders()), signTags.get("h"));
 
     MockPublicKeyRecordRetriever recordRetriever = new MockPublicKeyRecordRetriever();
     recordRetriever.addRecord("lgao", "example.com", "v=DKIM1; k=rsa; p=" + pubKeyStr);
@@ -273,7 +266,6 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     ctx.assertEquals("from@example.com", record.getIdentity());
     ctx.assertEquals("example.com", record.getDToken());
     ctx.assertEquals("sha-256", record.getHashAlgo());
-    System.err.println("Body Hash in Verifier: " + Base64.getEncoder().encodeToString(record.getBodyHash()));
   }
 
 }

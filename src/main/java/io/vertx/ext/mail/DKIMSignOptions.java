@@ -52,9 +52,9 @@ public class DKIMSignOptions {
   private String selector;
   private MessageCanonic headerCanonic = MessageCanonic.SIMPLE;
   private MessageCanonic bodyCanonic = MessageCanonic.SIMPLE;
-  private int bodyLimit = -1;
+  private long bodyLimit = -1L;
   private boolean signatureTimestamp;
-  private int expireTime = -1;
+  private long expireTime = -1L;
   private List<String> copiedHeaders;
 
   /**
@@ -291,7 +291,7 @@ public class DKIMSignOptions {
    *
    * @return the body limit
    */
-  public int getBodyLimit() {
+  public long getBodyLimit() {
     return bodyLimit;
   }
 
@@ -301,7 +301,7 @@ public class DKIMSignOptions {
    * @param bodyLimit the body limit
    * @return a reference to this, so the API can be used fluently
    */
-  public DKIMSignOptions setBodyLimit(int bodyLimit) {
+  public DKIMSignOptions setBodyLimit(long bodyLimit) {
     if (bodyLimit <= 0) {
       throw new IllegalArgumentException("Body Limit to calculate the hash must be larger than 0");
     }
@@ -334,7 +334,7 @@ public class DKIMSignOptions {
    *
    * @return expire time of signature. Positive value means the signature sign timestamp is enabled.
    */
-  public int getExpireTime() {
+  public long getExpireTime() {
     return expireTime;
   }
 
@@ -346,7 +346,7 @@ public class DKIMSignOptions {
    * @param expireTime the expire time in seconds
    * @return a reference to this, so the API can be used fluently
    */
-  public DKIMSignOptions setExpireTime(int expireTime) {
+  public DKIMSignOptions setExpireTime(long expireTime) {
     if (expireTime <= 0) {
       throw new IllegalArgumentException("Expire time must be larger than 0");
     }

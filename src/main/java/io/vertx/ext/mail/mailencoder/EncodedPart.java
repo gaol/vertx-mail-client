@@ -16,6 +16,7 @@
 
 package io.vertx.ext.mail.mailencoder;
 
+import io.vertx.core.Context;
 import io.vertx.core.MultiMap;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.streams.ReadStream;
@@ -52,7 +53,11 @@ public abstract class EncodedPart {
     return asString().length();
   }
 
-  public ReadStream<Buffer> bodyStream() {
+  public ReadStream<Buffer> bodyStream(Context context) {
+    return null;
+  }
+
+  public ReadStream<Buffer> dkimBodyStream(Context context) {
     return null;
   }
 

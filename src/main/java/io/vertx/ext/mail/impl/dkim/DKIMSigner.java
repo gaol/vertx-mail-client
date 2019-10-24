@@ -16,9 +16,13 @@
 
 package io.vertx.ext.mail.impl.dkim;
 
+import io.vertx.codegen.annotations.Nullable;
 import io.vertx.core.*;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
+import io.vertx.core.streams.ReadStream;
+import io.vertx.core.streams.WriteStream;
 import io.vertx.ext.auth.HashingAlgorithm;
 import io.vertx.ext.auth.HashingStrategy;
 import io.vertx.ext.mail.DKIMSignOptions;
@@ -30,6 +34,8 @@ import java.security.*;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -180,17 +186,24 @@ public class DKIMSigner {
     context.executeBlocking(bodyHashing(context, encodedMessage), bhr -> {
       if (bhr.succeeded()) {
         String bh = bhr.result();
-        System.err.println("DKIM Body Hash: " + bh);
+        if (logger.isDebugEnabled()) {
+          logger.debug("DKIM Body Hash: " + bh);
+        }
         final StringBuilder dkimTagListBuilder = dkimTagList(encodedMessage).append("bh=").append(bh).append("; b=");
         String dkimSignHeaderCanonic = canonicHeader(DKIM_SIGNATURE_HEADER, dkimTagListBuilder.toString());
-        final StringBuilder tobeSigned = headersToSign(encodedMessage).append(dkimSignHeaderCanonic);
+        final String tobeSigned = headersToSign(encodedMessage).append(dkimSignHeaderCanonic).toString();
+        if (logger.isDebugEnabled()) {
+          logger.debug("To be signed DKIM header: " + tobeSigned);
+        }
         try {
-          System.err.println("To be signed: ##\n" + tobeSigned + "\n:-##");
           String returnStr;
           synchronized (signatureService) {
-            signatureService.update(tobeSigned.toString().getBytes());
+            signatureService.update(tobeSigned.getBytes());
             String sig = Base64.getEncoder().encodeToString(signatureService.sign());
             returnStr = dkimTagListBuilder.append(sig).toString();
+          }
+          if (logger.isDebugEnabled()) {
+            logger.debug(DKIM_SIGNATURE_HEADER + ": " + returnStr);
           }
           promise.complete(returnStr);
         } catch (SignatureException e) {
@@ -213,7 +226,7 @@ public class DKIMSigner {
     }
     String lines = sb.toString().replaceFirst("[\r\n]*$", "\r\n");
     if (dkimSignOptions.getBodyLimit() > 0 && dkimSignOptions.getBodyLimit() < lines.length()) {
-      lines = lines.substring(0, dkimSignOptions.getBodyLimit());
+      lines = lines.substring(0, (int)dkimSignOptions.getBodyLimit());
     }
     return lines;
   }
@@ -227,39 +240,131 @@ public class DKIMSigner {
     return line + "\r\n";
   }
 
-  private Future<Void> goThoughtMultiPart(MessageDigest md, EncodedPart multiPart) {
-    Promise<Void> gothrough = Promise.promise();
-    // it is a multipart message, calculate all into buffer for now, even for the ReadStream of the attachment.
-    StringBuilder sb = new StringBuilder();
+  // the attachPart is a base64 encoded stream already when this method is called.
+  private void walkThroughAttachStream(MessageDigest md, ReadStream<Buffer> stream, AtomicLong written, Promise<Void> promise) {
+    stream.pipe().to(new WriteStream<Buffer>() {
+      private AtomicBoolean ended = new AtomicBoolean(false);
+
+      @Override
+      public WriteStream<Buffer> exceptionHandler(Handler<Throwable> handler) {
+        return this;
+      }
+
+      @Override
+      public Future<Void> write(Buffer data) {
+        Promise<Void> promise = Promise.promise();
+        write(data, promise);
+        return promise.future();
+      }
+
+      @Override
+      public void write(Buffer data, Handler<AsyncResult<Void>> handler) {
+        try {
+          if (!ended.get() && !digest(md, data.getBytes(), written)) {
+            // can be end now
+            promise.complete();
+            ended.set(true);
+          }
+          if (handler != null) {
+            handler.handle(Future.succeededFuture());
+          }
+        } catch (Exception e) {
+          promise.fail(e);
+        }
+      }
+
+      @Override
+      public void end(Handler<AsyncResult<Void>> handler) {
+        ended.compareAndSet(false, true);
+        if (handler != null) {
+          handler.handle(Future.succeededFuture());
+        }
+      }
+
+      @Override
+      public WriteStream<Buffer> setWriteQueueMaxSize(int maxSize) {
+        return this;
+      }
+
+      @Override
+      public boolean writeQueueFull() {
+        return false;
+      }
+
+      @Override
+      public WriteStream<Buffer> drainHandler(@Nullable Handler<Void> handler) {
+        return this;
+      }
+    }, promise);
+  }
+
+  private boolean digest(MessageDigest md, byte[] bytes, AtomicLong written) {
+    if (this.dkimSignOptions.getBodyLimit() > 0) {
+      long left = this.dkimSignOptions.getBodyLimit() - written.get();
+      if (left > 0) {
+        int len = Math.min((int)left, bytes.length);
+        md.update(bytes, 0, len);
+        written.getAndAdd(len);
+      } else {
+        return false;
+      }
+    } else {
+      md.update(bytes);
+    }
+    return true;
+  }
+
+  private void walkThroughMultiPart(Context context, MessageDigest md, EncodedPart multiPart, int index,
+                                    AtomicLong written, Promise<Void> promise) {
     String boundaryStart = "--" + multiPart.boundary() + "\r\n";
     String boundaryEnd = "--" + multiPart.boundary() + "--";// no \r\n for boundary end
-    for (EncodedPart part: multiPart.parts()) {
-      // boundary start
-//            md.update(("--" + encodedMessage.boundary() + "\r\n").getBytes());
-      // part headers
-      // no headers, just boundary, with some headers ???
-      part.headers().entries().forEach(entry -> {
-//              md.update((entry.toString() + "\r\n").getBytes());
-        sb.append(entry.toString());
-        sb.append("\r\n");
-      });
-      sb.append("\r\n");
-//            md.update("\r\n".getBytes());
-      Scanner scanner = new Scanner(part.body()).useDelimiter(DELIMITER);
-      while (scanner.hasNext()) {
-        sb.append(canonicBodyLine(scanner.nextLine(), dkimSignOptions.getBodyCanonic()));
-      }
-//            String lines = sb.toString().replaceFirst("[\r\n]*$", "\r\n");
-//            md.update(dkimMailBody(part, this.dkimSignOptions).getBytes());
-//            md.update("\r\n".getBytes());
-    }
-    // boundary end
-//          md.update(("--" + encodedMessage.boundary() + "--\r\n").getBytes());
-//    sb.append("--").append(encodedMessage.boundary()).append("--");
-    String str = sb.toString().replaceFirst("[\r\n]*$", "\r\n");
+    if (index < multiPart.parts().size()) {
+      EncodedPart part = multiPart.parts().get(index);
 
-    System.err.println("Multipart Body: ##\n" + str + "\n:-");
-    return gothrough.future();
+      Promise<Void> nextPartPromise = Promise.promise();
+      nextPartPromise.future().setHandler(r -> {
+        if (r.succeeded()) {
+          walkThroughMultiPart(context, md, multiPart, index + 1, written, promise);
+        } else {
+          promise.fail(r.cause());
+        }
+      });
+      if (part.parts() != null && part.parts().size() > 0) {
+        // part is a multipart as well
+        walkThroughMultiPart(context, md, part, 0, written, nextPartPromise);
+      } else {
+        // part is a normal Part
+        StringBuilder sb = new StringBuilder();
+        sb.append(boundaryStart);
+        part.headers().entries().forEach(entry -> sb.append(entry.toString()).append("\r\n"));
+        sb.append("\r\n");
+        if(!digest(md, sb.toString().getBytes(), written)) {
+          nextPartPromise.complete();
+          return;
+        }
+        // body now
+        if (part.body() != null) {
+          Scanner scanner = new Scanner(part.body()).useDelimiter(DELIMITER);
+          while (scanner.hasNext()) {
+            if (!digest(md, canonicBodyLine(scanner.nextLine(), dkimSignOptions.getBodyCanonic()).getBytes(), written)) {
+              break;
+            }
+          }
+          nextPartPromise.complete();
+        } else {
+          ReadStream<Buffer> dkimAttachStream = part.dkimBodyStream(context);
+          if (dkimAttachStream != null) {
+            walkThroughAttachStream(md, dkimAttachStream, written, nextPartPromise);
+          } else {
+            nextPartPromise.fail("No data and stream found.");
+          }
+        }
+      }
+    } else {
+      // after last part has been walked through
+      digest(md, (boundaryEnd + "\r\n").getBytes(), written);
+      promise.complete();
+    }
   }
 
   // https://tools.ietf.org/html/rfc6376#section-3.7
@@ -269,52 +374,17 @@ public class DKIMSigner {
       try {
         if (encodedMessage.parts() != null && encodedMessage.parts().size() > 0) {
           final MessageDigest md = MessageDigest.getInstance(dkimSignOptions.getSignAlgo().getHashAlgorithm());
-//          Future<Void> goThroughMultiPart = goThoughtMultiPart(md, encodedMessage);
-//          goThroughMultiPart.setHandler(r -> {
-//            if (r.succeeded()) {
-//              // MD has been updated through reading the whole multipart message.
-//              String bh = Base64.getEncoder().encodeToString(md.digest());
-//              p.complete(bh);
-//            } else {
-//              p.fail(r.cause());
-//            }
-//          });
-          // it is a multipart message, calculate all into buffer for now, even for the ReadStream of the attachment.
-          StringBuilder sb = new StringBuilder();
-          for (EncodedPart part: encodedMessage.parts()) {
-            sb.append("--").append(encodedMessage.boundary()).append("\r\n");
-            // boundary start
-//            md.update(("--" + encodedMessage.boundary() + "\r\n").getBytes());
-            // part headers
-            // no headers, just boundary, with some headers ???
-            part.headers().entries().forEach(entry -> {
-//              md.update((entry.toString() + "\r\n").getBytes());
-              sb.append(entry.toString());
-              sb.append("\r\n");
-            });
-            sb.append("\r\n");
-//            md.update("\r\n".getBytes());
-            Scanner scanner = new Scanner(part.body()).useDelimiter(DELIMITER);
-            while (scanner.hasNext()) {
-              sb.append(canonicBodyLine(scanner.nextLine(), dkimSignOptions.getBodyCanonic()));
+          Promise<Void> promise = Promise.promise();
+          promise.future().setHandler(r -> {
+            if (r.succeeded()) {
+              // MD has been updated through reading the whole multipart message.
+              String bh = Base64.getEncoder().encodeToString(md.digest());
+              p.complete(bh);
+            } else {
+              p.fail(r.cause());
             }
-//            String lines = sb.toString().replaceFirst("[\r\n]*$", "\r\n");
-//            md.update(dkimMailBody(part, this.dkimSignOptions).getBytes());
-//            md.update("\r\n".getBytes());
-          }
-          // boundary end
-//          md.update(("--" + encodedMessage.boundary() + "--\r\n").getBytes());
-          sb.append("--").append(encodedMessage.boundary()).append("--");
-          String str = sb.toString().replaceFirst("[\r\n]*$", "\r\n");
-
-          System.err.println("Multipart Body: ##\n" + str + "\n:-");
-
-          String bh = Base64.getEncoder().encodeToString(md.digest(str.getBytes()));
-
-          // OWtfKrLL5j73cuO9II7F4KB/1PcOI3G0Ww1+Pu9c0y0=
-          // OWtfKrLL5j73cuO9II7F4KB/1PcOI3G0Ww1+Pu9c0y0=
-          System.err.println("Body Hash of Multipart: " + bh);
-          p.complete(bh);
+          });
+          walkThroughMultiPart(context, md, encodedMessage, 0, new AtomicLong(), promise);
         } else {
           HashingAlgorithm hashingAlgorithm = hashingStrategy.get(dkimSignOptions.getSignAlgo().getHashAlgoId());
           String canonicBody = dkimMailBody(encodedMessage, this.dkimSignOptions);
