@@ -56,7 +56,7 @@ public class DKIMSigner {
   private final String signatureTemplate;
   private final HashingStrategy hashingStrategy = HashingStrategy.load();
   private final Signature signatureService;
-  private static final Pattern DELIMITER = Pattern.compile("[\r\n]");
+  private static final Pattern DELIMITER = Pattern.compile("\n");
 
   /**
    * The Constuctor of DKIMSigner.
