@@ -30,8 +30,12 @@ import org.apache.james.jdkim.impl.Message;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import javax.mail.internet.MimeMessage;
+import javax.mail.internet.MimeMultipart;
 import java.io.ByteArrayInputStream;
 import java.util.*;
+
+import static io.vertx.ext.mail.TestUtils.*;
 
 /**
  * Test sending mails with DKIM enabled.
@@ -64,7 +68,7 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     "Mgfi5t49NNAeHr7EXQIDAQAB";
 
   private static final String TEXT_BODY = "This is a Multiple Lines Text\n\n.Some lines start with one dot\n..Some" +
-    "lines start with 2 dots.\n.\t..Some lines start with dot and HT.\n";
+    "lines start with 2 dots.\n.\t..Some lines start with dot and HT.";
 
   private final PubSecKeyOptions pubSecKeyOptions = new PubSecKeyOptions().setSymmetric(false)
     .setSecretKey(privateKey).setPublicKey(pubKeyStr);
@@ -81,7 +85,10 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     MailMessage message = exampleMessage().setText(TEXT_BODY);
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
       .setHeaderCanonic(MessageCanonic.SIMPLE).setBodyCanonic(MessageCanonic.SIMPLE);
-    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      testContext.assertEquals(TEXT_BODY + "\n", TestUtils.conv2nl(TestUtils.inputStreamToString(wiser.getMessages().get(0).getMimeMessage().getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
   }
 
   @Test
@@ -90,7 +97,10 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     MailMessage message = exampleMessage().setText(TEXT_BODY);
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
       .setHeaderCanonic(MessageCanonic.SIMPLE).setBodyCanonic(MessageCanonic.RELAXED);
-    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      testContext.assertEquals(TEXT_BODY + "\n", TestUtils.conv2nl(TestUtils.inputStreamToString(wiser.getMessages().get(0).getMimeMessage().getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
   }
 
   @Test
@@ -99,7 +109,10 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     MailMessage message = exampleMessage().setText(TEXT_BODY);
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
       .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.RELAXED);
-    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      testContext.assertEquals(TEXT_BODY + "\n", TestUtils.conv2nl(TestUtils.inputStreamToString(wiser.getMessages().get(0).getMimeMessage().getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
   }
 
   @Test
@@ -108,7 +121,10 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     MailMessage message = exampleMessage().setText(TEXT_BODY);
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase).setBodyLimit(20)
       .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.RELAXED);
-    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      testContext.assertEquals(TEXT_BODY + "\n", TestUtils.conv2nl(TestUtils.inputStreamToString(wiser.getMessages().get(0).getMimeMessage().getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
   }
 
   @Test
@@ -117,7 +133,10 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     MailMessage message = exampleMessage().setText(TEXT_BODY);
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase).setBodyLimit(20)
       .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.SIMPLE);
-    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      testContext.assertEquals(TEXT_BODY + "\n", TestUtils.conv2nl(TestUtils.inputStreamToString(wiser.getMessages().get(0).getMimeMessage().getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
   }
 
   @Test
@@ -126,7 +145,10 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     MailMessage message = exampleMessage().setText(TEXT_BODY);
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
       .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.SIMPLE);
-    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      testContext.assertEquals(TEXT_BODY + "\n", TestUtils.conv2nl(TestUtils.inputStreamToString(wiser.getMessages().get(0).getMimeMessage().getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
   }
 
   @Test
@@ -139,7 +161,13 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
       .setHeaderCanonic(MessageCanonic.SIMPLE).setBodyCanonic(MessageCanonic.SIMPLE);
-    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
   }
 
   @Test
@@ -152,7 +180,13 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
       .setHeaderCanonic(MessageCanonic.SIMPLE).setBodyCanonic(MessageCanonic.RELAXED);
-    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
   }
 
   @Test
@@ -165,7 +199,13 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
       .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.SIMPLE);
-    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
   }
 
   @Test
@@ -178,7 +218,13 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
       .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.RELAXED);
-    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
   }
 
   @Test
@@ -187,12 +233,18 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     String path = "logo-white-big.png";
     Buffer img = vertx.fileSystem().readFileBlocking(path);
     ReadStream<Buffer> stream = vertx.fileSystem().openBlocking(path, new OpenOptions());
-    MailAttachment attachment = MailAttachment.create().setName("logo-white-big.png").setStream(stream).setSize(img.length());
+    MailAttachment attachment = MailAttachment.create().setName(path).setStream(stream).setSize(img.length());
     MailMessage message = exampleMessage().setText(TEXT_BODY).setAttachment(attachment);
 
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
       .setHeaderCanonic(MessageCanonic.SIMPLE).setBodyCanonic(MessageCanonic.SIMPLE);
-    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
   }
 
   @Test
@@ -206,7 +258,13 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
       .setHeaderCanonic(MessageCanonic.SIMPLE).setBodyCanonic(MessageCanonic.RELAXED);
-    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
   }
 
   @Test
@@ -220,7 +278,13 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
       .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.SIMPLE);
-    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
   }
 
   @Test
@@ -234,7 +298,13 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
       .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.RELAXED);
-    testSuccess(dkimMailClient(dkimOps), message, () -> testDKIMSign(dkimOps, testContext));
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
   }
 
   private void testDKIMSign(DKIMSignOptions dkimOps, TestContext ctx) throws Exception {
