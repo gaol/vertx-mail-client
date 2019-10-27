@@ -183,7 +183,8 @@ public class DKIMSigner {
    */
   public Future<String> signEmail(Context context, EncodedPart encodedMessage) {
     Promise<String> promise = Promise.promise();
-    context.executeBlocking(bodyHashing(context, encodedMessage), bhr -> {
+    Future<String> bodyHashFuture = bodyHashing(context, encodedMessage);
+    bodyHashFuture.setHandler(bhr -> {
       if (bhr.succeeded()) {
         String bh = bhr.result();
         if (logger.isDebugEnabled()) {
@@ -259,17 +260,12 @@ public class DKIMSigner {
 
       @Override
       public void write(Buffer data, Handler<AsyncResult<Void>> handler) {
-        try {
-          if (!ended.get() && !digest(md, data.getBytes(), written)) {
-            // can be end now
-            promise.complete();
-            ended.set(true);
-          }
-          if (handler != null) {
-            handler.handle(Future.succeededFuture());
-          }
-        } catch (Exception e) {
-          promise.fail(e);
+        if (!ended.get() && !digest(md, data.getBytes(), written)) {
+          // can be end now
+          ended.set(true);
+        }
+        if (handler != null) {
+          handler.handle(Future.succeededFuture());
         }
       }
 
@@ -352,6 +348,7 @@ public class DKIMSigner {
           }
           nextPartPromise.complete();
         } else {
+          System.out.println("Start DKIM Stream: " + Thread.currentThread());
           ReadStream<Buffer> dkimAttachStream = part.dkimBodyStream(context);
           if (dkimAttachStream != null) {
             walkThroughAttachStream(md, dkimAttachStream, written, nextPartPromise);
@@ -368,33 +365,33 @@ public class DKIMSigner {
   }
 
   // https://tools.ietf.org/html/rfc6376#section-3.7
-  private Handler<Promise<String>> bodyHashing(Context context, EncodedPart encodedMessage) {
-    return p -> {
-      // running in blocking mode
+  private Future<String> bodyHashing(Context context, EncodedPart encodedMessage) {
+    Promise<String> bodyHashPromise = Promise.promise();
+    System.out.println("Body Hashing for DKIM in thread: " + Thread.currentThread());
+    if (encodedMessage.parts() != null && encodedMessage.parts().size() > 0) {
       try {
-        if (encodedMessage.parts() != null && encodedMessage.parts().size() > 0) {
-          final MessageDigest md = MessageDigest.getInstance(dkimSignOptions.getSignAlgo().getHashAlgorithm());
-          Promise<Void> promise = Promise.promise();
-          promise.future().setHandler(r -> {
-            if (r.succeeded()) {
-              // MD has been updated through reading the whole multipart message.
-              String bh = Base64.getEncoder().encodeToString(md.digest());
-              p.complete(bh);
-            } else {
-              p.fail(r.cause());
-            }
-          });
-          walkThroughMultiPart(context, md, encodedMessage, 0, new AtomicLong(), promise);
-        } else {
-          HashingAlgorithm hashingAlgorithm = hashingStrategy.get(dkimSignOptions.getSignAlgo().getHashAlgoId());
-          String canonicBody = dkimMailBody(encodedMessage, this.dkimSignOptions);
-          String bh = hashingAlgorithm.hash(null, canonicBody);
-          p.complete(bh);
-        }
+        final MessageDigest md = MessageDigest.getInstance(dkimSignOptions.getSignAlgo().getHashAlgorithm());
+        Promise<Void> promise = Promise.promise();
+        promise.future().setHandler(r -> {
+          if (r.succeeded()) {
+            // MD has been updated through reading the whole multipart message.
+            String bh = Base64.getEncoder().encodeToString(md.digest());
+            bodyHashPromise.complete(bh);
+          } else {
+            bodyHashPromise.fail(r.cause());
+          }
+        });
+        walkThroughMultiPart(context, md, encodedMessage, 0, new AtomicLong(), promise);
       } catch (Exception e) {
-        p.fail(e);
+        bodyHashPromise.fail(e);
       }
-    };
+    } else {
+      HashingAlgorithm hashingAlgorithm = hashingStrategy.get(dkimSignOptions.getSignAlgo().getHashAlgoId());
+      String canonicBody = dkimMailBody(encodedMessage, this.dkimSignOptions);
+      String bh = hashingAlgorithm.hash(null, canonicBody);
+      bodyHashPromise.complete(bh);
+    }
+    return bodyHashPromise.future();
   }
 
   private StringBuilder headersToSign(EncodedPart encodedMessage) {

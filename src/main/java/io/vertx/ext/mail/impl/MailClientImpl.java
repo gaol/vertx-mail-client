@@ -26,7 +26,10 @@ import io.vertx.ext.mail.MailConfig;
 import io.vertx.ext.mail.MailMessage;
 import io.vertx.ext.mail.MailResult;
 import io.vertx.ext.mail.impl.dkim.DKIMSigner;
+import io.vertx.ext.mail.mailencoder.EncodedPart;
+import io.vertx.ext.mail.mailencoder.MailEncoder;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -123,16 +126,54 @@ public class MailClientImpl implements MailClient {
     });
   }
 
+  private Future<Void> dkimFuture(Context context, EncodedPart encodedPart) {
+    Promise<Void> promise = Promise.promise();
+    List<Future> dkimFutures = new ArrayList<>();
+    // run dkim sign, and add email header after that.
+    dkimSigners.forEach(dkim -> dkimFutures.add(dkim.signEmail(context, encodedPart)));
+    CompositeFuture.all(dkimFutures).setHandler(r -> {
+      if (r.succeeded()) {
+        try {
+          List<String> dkimHeaders = dkimFutures.stream().map(f -> f.result().toString()).collect(Collectors.toList());
+          encodedPart.headers().add(DKIMSigner.DKIM_SIGNATURE_HEADER, dkimHeaders);
+        } finally {
+          promise.complete();
+        }
+      } else {
+        promise.fail(r.cause());
+      }
+    });
+    return promise.future();
+  }
+
   private void sendMessage(MailMessage email, SMTPConnection conn, Handler<AsyncResult<MailResult>> resultHandler,
       Context context) {
-    new SMTPSendMail(conn, email, config, hostname, dkimSigners, result -> {
+    final MailEncoder encoder = new MailEncoder(email, hostname);
+    final EncodedPart encodedPart = encoder.encodeMail();
+    final String messageId = encoder.getMessageID();
+    final SMTPSendMail sendMail = new SMTPSendMail(conn, email, config, encodedPart, messageId, result -> {
       if (result.succeeded()) {
         conn.returnToPool();
       } else {
         conn.setBroken();
       }
       returnResult(result, resultHandler, context);
-    }).start();
+    });
+    if (dkimSigners.isEmpty()) {
+      sendMail.start();
+    } else {
+      // generate the DKIM header before start
+      System.out.println("Try to start send message " + Thread.currentThread());
+      dkimFuture(conn.getContext(), encodedPart).setHandler(dkim -> {
+        if (dkim.succeeded()) {
+          System.out.println("\n\nAfter DKIM, try to send mail " + Thread.currentThread());
+//          conn.getContext().runOnContext(start -> sendMail.start());
+          sendMail.start();
+        } else {
+          handleError(dkim.cause(), resultHandler, context);
+        }
+      });
+    }
   }
 
   // do some validation before we open the connection
