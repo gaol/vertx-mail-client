@@ -19,7 +19,6 @@ package io.vertx.ext.mail;
 import io.vertx.codegen.annotations.Nullable;
 import io.vertx.core.Context;
 import io.vertx.core.Handler;
-import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.file.OpenOptions;
 import io.vertx.core.streams.ReadStream;
@@ -28,20 +27,16 @@ import io.vertx.ext.auth.PubSecKeyOptions;
 import io.vertx.ext.mail.impl.dkim.DKIMSigner;
 import io.vertx.ext.unit.TestContext;
 import io.vertx.ext.unit.junit.VertxUnitRunner;
-import io.vertx.test.fakestream.FakeStream;
 import org.apache.james.jdkim.DKIMVerifier;
 import org.apache.james.jdkim.MockPublicKeyRecordRetriever;
 import org.apache.james.jdkim.api.SignatureRecord;
 import org.apache.james.jdkim.impl.Message;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import javax.mail.internet.MimeMultipart;
 import java.io.ByteArrayInputStream;
 import java.util.*;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static io.vertx.ext.mail.TestUtils.*;
 
@@ -340,19 +335,9 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     });
   }
 
-  private String fakeStreamData() {
-    return "log4j.appender.stdout.layout=org.apache.log4j.PatternLayout\n" +
-      "log4j.appender.stdout.layout.ConversionPattern=%d{yyyy-MM-dd HH:mm:ss.SSS} %-5p [%t]%C.%M:%L - %m%n\n" +
-      "\n" +
-      "#log4j.appender.FILE=org.apache.log4j.FileAppender\n" +
-      "#log4j.appender.FILE.file=c:/temp/vertx.log\n" +
-      "#log4j.appender.FILE.layout=org.apache.log4j.PatternLayout\n" +
-      "#log4j.appender.FILE.layout.ConversionPattern=%d{yyyy-MM-dd HH:mm:ss} %-5p [%t]%c.%M:%L - %m%n\n" +
-      "\n" +
-      "log4j.logger.io.netty=INFO\n" +
-      "log4j.logger.io.vertx=DEBUG\n" +
-      "log4j.logger.org.apache.http=INFO\n" +
-      "log4j.logger.org.subethamail=INFO";
+  private Buffer fakeStreamData() {
+    String path = "logo-white-big.png";
+    return vertx.fileSystem().readFileBlocking(path);
   }
 
   private class FakeReadStream implements ReadStream<Buffer> {
@@ -360,10 +345,8 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     private Handler<Void> endHandler;
 
     private FakeReadStream(Context context) {
-      this.pending = new InboundBuffer<Buffer>(context).emptyHandler(v -> checkEnd()).drainHandler(v -> resume()).pause();
-      context.runOnContext(h -> {
-        this.pending.write(Buffer.buffer(fakeStreamData()));
-      });
+      this.pending = new InboundBuffer<Buffer>(context).emptyHandler(v -> checkEnd()).pause();
+      context.runOnContext(h -> this.pending.write(fakeStreamData()));
     }
 
     private void checkEnd() {
@@ -375,38 +358,37 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     }
 
     @Override
-    public ReadStream<Buffer> exceptionHandler(Handler<Throwable> handler) {
+    public synchronized ReadStream<Buffer> exceptionHandler(Handler<Throwable> handler) {
       pending.exceptionHandler(handler);
       return this;
     }
 
     @Override
-    public ReadStream<Buffer> handler(@Nullable Handler<Buffer> handler) {
+    public synchronized ReadStream<Buffer> handler(@Nullable Handler<Buffer> handler) {
       pending.handler(handler);
       return this;
     }
 
     @Override
-    public ReadStream<Buffer> pause() {
+    public synchronized ReadStream<Buffer> pause() {
       pending.pause();
       return this;
     }
 
     @Override
-    public ReadStream<Buffer> resume() {
+    public synchronized ReadStream<Buffer> resume() {
       pending.resume();
-      checkEnd();
       return this;
     }
 
     @Override
-    public ReadStream<Buffer> fetch(long amount) {
+    public synchronized ReadStream<Buffer> fetch(long amount) {
       pending.fetch(amount);
       return this;
     }
 
     @Override
-    public ReadStream<Buffer> endHandler(@Nullable Handler<Void> endHandler) {
+    public synchronized ReadStream<Buffer> endHandler(@Nullable Handler<Void> endHandler) {
       this.endHandler = endHandler;
       return this;
     }
@@ -416,7 +398,7 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   public void testMailSimpleSimpleNonFileAttachmentStream(TestContext testContext) {
     System.setProperty("vertx.mail.attachment.cache.file", "false");
     this.testContext = testContext;
-    String fakeData = fakeStreamData();
+    Buffer fakeData = fakeStreamData();
     byte[] fakeDataBytes = fakeData.getBytes();
     ReadStream<Buffer> fakeStream = new FakeReadStream(vertx.getOrCreateContext());
     MailAttachment attachment = MailAttachment.create().setName("FakeStream")
@@ -440,11 +422,10 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   }
 
   @Test
-//  @Ignore
   public void testMailSimpleSimpleNonFileAttachmentStreamCacheInFile(TestContext testContext) {
     System.setProperty("vertx.mail.attachment.cache.file", "true");
     this.testContext = testContext;
-    String fakeData = fakeStreamData();
+    Buffer fakeData = fakeStreamData();
     byte[] fakeDataBytes = fakeData.getBytes();
     ReadStream<Buffer> fakeStream = new FakeReadStream(vertx.getOrCreateContext());
     MailAttachment attachment = MailAttachment.create().setName("FakeStream")

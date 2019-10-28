@@ -163,16 +163,13 @@ public class MailClientImpl implements MailClient {
       sendMail.start();
     } else {
       // generate the DKIM header before start
-      System.out.println("Try to start send message " + Thread.currentThread());
-      dkimFuture(conn.getContext(), encodedPart).setHandler(dkim -> {
+      dkimFuture(conn.getContext(), encodedPart).setHandler(dkim -> conn.getContext().runOnContext(h -> {
         if (dkim.succeeded()) {
-          System.out.println("\n\nAfter DKIM, try to send mail " + Thread.currentThread());
-//          conn.getContext().runOnContext(start -> sendMail.start());
           sendMail.start();
         } else {
           handleError(dkim.cause(), resultHandler, context);
         }
-      });
+      }));
     }
   }
 

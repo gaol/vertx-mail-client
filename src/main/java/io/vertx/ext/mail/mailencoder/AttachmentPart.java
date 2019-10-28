@@ -29,6 +29,7 @@ import io.vertx.ext.mail.MailAttachment;
 
 import java.io.File;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 class AttachmentPart extends EncodedPart {
 
@@ -140,7 +141,7 @@ class AttachmentPart extends EncodedPart {
     private Handler<Buffer> handler;
     private Handler<Void> endHandler;
     private boolean caching;
-    private boolean streamEnded;
+    private AtomicBoolean streamEnded = new AtomicBoolean();
 
     private BodyReadStream(Context context, ReadStream<Buffer> stream, boolean tryReset) {
       Objects.requireNonNull(stream, "ReadStream cannot be null");
@@ -181,13 +182,13 @@ class AttachmentPart extends EncodedPart {
     @Override
     public synchronized BodyReadStream handler(@Nullable Handler<Buffer> handler) {
       if (handler == null) {
-//        stream.handler(null);
+        stream.handler(null);
         return this;
       }
       this.handler = handler;
-      stream.handler(b -> context.runOnContext(h -> {
-        if (streamEnded) {
-          System.out.println("Stream ended, no more handling...");
+      stream.handler(b -> {
+        if (streamEnded.get()) {
+          handleEventInContext(this.exceptionHandler, new IllegalStateException("Stream has been closed, no more reading."));
           return;
         }
         Buffer buffer = streamBuffer.appendBuffer(b);
@@ -199,52 +200,43 @@ class AttachmentPart extends EncodedPart {
           start += size;
         }
         streamBuffer = buffer.getBuffer(start, buffer.length());
-        handler.handle(bufferToSent);
-
+        handleEventInContext(this.handler, bufferToSent);
         if (cacheInMemory || cacheInFile) {
-          cacheBuffer(b).setHandler(r -> context.runOnContext(hh -> {
+          cacheBuffer(b).setHandler(r -> {
             synchronized (BodyReadStream.this) {
               caching = false;
+              if (r.failed()) {
+                handleEventInContext(this.exceptionHandler, r.cause());
+              }
+              checkEnd();
             }
-            if (r.succeeded()) {
-              System.out.println("Cached!! " + Thread.currentThread());
-            } else {
-              handleEvent(this.exceptionHandler, r.cause());
-            }
-            checkEnd();
-          }));
+          });
         }
-      }));
+      });
       return this;
     }
 
-    private Future<Void> cacheBuffer(Buffer buffer) {
+    private synchronized Future<Void> cacheBuffer(Buffer buffer) {
       caching = true;
       Promise<Void> promise = Promise.promise();
-      if (buffer != null) {
-        try {
-          if (cacheInMemory) {
-            cachedBuffer.appendBuffer(buffer);
-            promise.complete();
-          } else {
-            if (cachedFile == null) {
-              context.owner().fileSystem().open(cachedFilePath, new OpenOptions().setAppend(true))
-                .setHandler(c -> context.runOnContext(h -> {
-                  if (c.succeeded()) {
-                    cachedFile = c.result();
-                    System.out.println("\nCache in Create New File: " + cachedFilePath + ", at: " + Thread.currentThread());
-                    cachedFile.write(buffer, promise);
-                  } else {
-                    promise.fail(c.cause());
-                  }
-                }));
-            } else {
-              System.out.println("\nCache in File: " + cachedFilePath + ", at: " +  Thread.currentThread());
-              cachedFile.write(buffer, promise);
-            }
-          }
-        } catch (Exception e) {
-          promise.fail(e);
+      if (cacheInMemory) {
+        cachedBuffer.appendBuffer(buffer);
+        promise.complete();
+      } else if (cacheInFile) {
+        if (cachedFile == null) {
+          context.owner().fileSystem().open(cachedFilePath, new OpenOptions().setAppend(true))
+            .setHandler(c -> context.runOnContext(h -> {
+              if (c.succeeded()) {
+                synchronized (BodyReadStream.this) {
+                  cachedFile = c.result();
+                  cachedFile.write(buffer, promise);
+                }
+              } else {
+                promise.fail(c.cause());
+              }
+            }));
+        } else {
+          cachedFile.write(buffer, promise);
         }
       } else {
         promise.complete();
@@ -253,19 +245,18 @@ class AttachmentPart extends EncodedPart {
     }
 
     private synchronized void checkEnd() {
-      if (streamEnded && !caching) {
+      if (streamEnded.get() && !caching) {
         if (cacheInFile) {
           // cache in an AsyncFile
           AttachmentPart.this.attachment.setStream(cachedFile);
           AttachmentPart.this.cachedFilePath = cachedFilePath;
-          handleEvent(endHandler, null);
+          handleEventInContext(endHandler, null);
         } else if (cacheInMemory) {
           // next read will be the body in memory.
           if (part == null) {
-            System.out.println("Cached in memory, set it to base64 encoded strings");
             part = Utils.base64(cachedBuffer.getBytes());
           }
-          handleEvent(endHandler, null);
+          handleEventInContext(endHandler, null);
         } else {
           // normal stream, may need to delete the cached file if the cachedFilePath is not null
           if (AttachmentPart.this.cachedFilePath != null) {
@@ -273,16 +264,14 @@ class AttachmentPart extends EncodedPart {
             AttachmentPart.this.cachedFilePath = null;
             context.owner().fileSystem().delete(tmpPath).setHandler(deleteCacheFile -> context.runOnContext(dd -> {
               if (deleteCacheFile.succeeded()) {
-                System.out.println("Deleted cached file: "  + Thread.currentThread());
-                handleEvent(endHandler, null);
+                handleEventInContext(endHandler, null);
               } else {
                 new File(tmpPath).deleteOnExit();
-                handleEvent(this.exceptionHandler, deleteCacheFile.cause());
+                handleEventInContext(this.exceptionHandler, deleteCacheFile.cause());
               }
             }));
           } else {
-            System.out.println("No need to delete cache: "  + Thread.currentThread());
-            handleEvent(endHandler, null);
+            handleEventInContext(endHandler, null);
           }
         }
       }
@@ -309,30 +298,27 @@ class AttachmentPart extends EncodedPart {
     @Override
     public synchronized BodyReadStream endHandler(@Nullable Handler<Void> endHandler) {
       if (endHandler == null) {
-//        stream.endHandler(null);
+        stream.endHandler(null);
         return this;
       }
       this.endHandler = endHandler;
-      stream.endHandler(v -> context.runOnContext(vv -> {
-        if (streamEnded) {
-          System.out.println("Stream was ended already : " + Thread.currentThread());
+      stream.endHandler(v -> {
+        if (!streamEnded.compareAndSet(false, true)) {
           return;
         }
-        streamEnded = true;
-        System.out.println("Stream's endHandler got called: " + Thread.currentThread());
         if (streamBuffer.length() > 0 && this.handler != null) {
           String theLine = Utils.base64(streamBuffer.getBytes());
           Buffer buffer = Buffer.buffer(theLine + "\r\n");
-          this.handler.handle(buffer);
+          handleEventInContext(this.handler, buffer);
         }
         checkEnd();
-      }));
+      });
       return this;
     }
 
-    private <T> void handleEvent(Handler<T> handler, T t) {
+    private <T> void handleEventInContext(Handler<T> handler, T t) {
       if (handler != null) {
-        handler.handle(t);
+        context.runOnContext(h -> handler.handle(t));
       }
     }
 

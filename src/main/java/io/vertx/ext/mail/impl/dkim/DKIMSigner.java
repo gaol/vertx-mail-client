@@ -348,7 +348,6 @@ public class DKIMSigner {
           }
           nextPartPromise.complete();
         } else {
-          System.out.println("Start DKIM Stream: " + Thread.currentThread());
           ReadStream<Buffer> dkimAttachStream = part.dkimBodyStream(context);
           if (dkimAttachStream != null) {
             walkThroughAttachStream(md, dkimAttachStream, written, nextPartPromise);
@@ -367,7 +366,6 @@ public class DKIMSigner {
   // https://tools.ietf.org/html/rfc6376#section-3.7
   private Future<String> bodyHashing(Context context, EncodedPart encodedMessage) {
     Promise<String> bodyHashPromise = Promise.promise();
-    System.out.println("Body Hashing for DKIM in thread: " + Thread.currentThread());
     if (encodedMessage.parts() != null && encodedMessage.parts().size() > 0) {
       try {
         final MessageDigest md = MessageDigest.getInstance(dkimSignOptions.getSignAlgo().getHashAlgorithm());
