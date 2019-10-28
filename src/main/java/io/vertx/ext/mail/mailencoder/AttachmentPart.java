@@ -35,8 +35,7 @@ class AttachmentPart extends EncodedPart {
 
   private static final Logger log = LoggerFactory.getLogger(AttachmentPart.class);
 
-  // Whether to cache the ReadStream into an AsyncFile in case the Attachment's ReadStream
-  // is not a re-playable stream like AsyncFile does when DKIM is enabled.
+  // Whether to cache the ReadStream into an AsyncFile when DKIM is enabled.
   private static final boolean CACHE_IN_FILE = Boolean.getBoolean("vertx.mail.attachment.cache.file");
 
   private String cachedFilePath;
@@ -142,13 +141,15 @@ class AttachmentPart extends EncodedPart {
     private Handler<Void> endHandler;
     private boolean caching;
     private AtomicBoolean streamEnded = new AtomicBoolean();
+    private final boolean tryReset;
 
     private BodyReadStream(Context context, ReadStream<Buffer> stream, boolean tryReset) {
       Objects.requireNonNull(stream, "ReadStream cannot be null");
       this.stream = stream;
       this.context = context;
       this.streamBuffer = Buffer.buffer();
-      if (tryReset) {
+      this.tryReset = tryReset;
+      if (tryReset && !(stream instanceof AsyncFile)) {
         // cache
         if (CACHE_IN_FILE) {
           cacheInFile = true;
@@ -216,13 +217,14 @@ class AttachmentPart extends EncodedPart {
       return this;
     }
 
+    // when this method is called, either cacheInMemory or cacheInFile is true
     private synchronized Future<Void> cacheBuffer(Buffer buffer) {
       caching = true;
       Promise<Void> promise = Promise.promise();
       if (cacheInMemory) {
         cachedBuffer.appendBuffer(buffer);
         promise.complete();
-      } else if (cacheInFile) {
+      } else {
         if (cachedFile == null) {
           context.owner().fileSystem().open(cachedFilePath, new OpenOptions().setAppend(true))
             .setHandler(c -> context.runOnContext(h -> {
@@ -238,23 +240,23 @@ class AttachmentPart extends EncodedPart {
         } else {
           cachedFile.write(buffer, promise);
         }
-      } else {
-        promise.complete();
       }
       return promise.future();
     }
 
     private synchronized void checkEnd() {
       if (streamEnded.get() && !caching) {
-        if (cacheInFile) {
-          // cache in an AsyncFile
-          AttachmentPart.this.attachment.setStream(cachedFile);
-          AttachmentPart.this.cachedFilePath = cachedFilePath;
-          handleEventInContext(endHandler, null);
-        } else if (cacheInMemory) {
-          // next read will be the body in memory.
-          if (part == null) {
+        if (tryReset) {
+          if (cacheInFile) {
+            // cache in an AsyncFile
+            AttachmentPart.this.attachment.setStream(cachedFile);
+            AttachmentPart.this.cachedFilePath = cachedFilePath;
+          } else if (cacheInMemory) {
+            // next read will be the body in memory.
             part = Utils.base64(cachedBuffer.getBytes());
+          } else {
+            // this must be AsyncFile case
+            ((AsyncFile)this.stream).setReadPos(0L);
           }
           handleEventInContext(endHandler, null);
         } else {
@@ -262,14 +264,14 @@ class AttachmentPart extends EncodedPart {
           if (AttachmentPart.this.cachedFilePath != null) {
             String tmpPath = AttachmentPart.this.cachedFilePath;
             AttachmentPart.this.cachedFilePath = null;
-            context.owner().fileSystem().delete(tmpPath).setHandler(deleteCacheFile -> context.runOnContext(dd -> {
+            context.owner().fileSystem().delete(tmpPath).setHandler(deleteCacheFile -> {
               if (deleteCacheFile.succeeded()) {
                 handleEventInContext(endHandler, null);
               } else {
                 new File(tmpPath).deleteOnExit();
                 handleEventInContext(this.exceptionHandler, deleteCacheFile.cause());
               }
-            }));
+            });
           } else {
             handleEventInContext(endHandler, null);
           }
