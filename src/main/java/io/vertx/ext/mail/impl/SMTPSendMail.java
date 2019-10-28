@@ -234,6 +234,7 @@ class SMTPSendMail {
   private void sendMultiPart(EncodedPart multiPart, final int i, Promise<Void> promise) {
     try {
       final String boundaryStart = "--" + multiPart.boundary();
+      final String boundaryEnd = boundaryStart + "--";
       final EncodedPart thePart = multiPart.parts().get(i);
 
       Promise<Void> boundaryStartPromise = Promise.promise();
@@ -243,7 +244,6 @@ class SMTPSendMail {
           nextPromise.future().setHandler(vv -> {
             if (vv.succeeded()) {
               if (i == multiPart.parts().size() - 1) {
-                String boundaryEnd = boundaryStart + "--";
                 connection.writeLineWithDrainPromise(boundaryEnd, written.getAndAdd(boundaryEnd.length()) < 1000, promise);
               } else {
                 sendMultiPart(multiPart, i + 1, promise);
@@ -253,7 +253,15 @@ class SMTPSendMail {
             }
           });
           if (isMultiPart(thePart)) {
-            sendMultiPart(thePart, 0, nextPromise);
+            Promise<Void> thePartHeaders = Promise.promise();
+            thePartHeaders.future().setHandler(vv -> {
+              if (vv.succeeded()) {
+                sendMultiPart(thePart, 0, nextPromise);
+              } else {
+                promise.fail(vv.cause());
+              }
+            });
+            sendMailHeaders(thePart.headers().entries(), 0, thePartHeaders);
           } else {
             sendRegularPart(thePart, nextPromise);
           }

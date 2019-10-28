@@ -76,6 +76,8 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   private static final String TEXT_BODY = "This is a Multiple Lines Text\n\n.Some lines start with one dot\n..Some" +
     "lines start with 2 dots.\n.\t..Some lines start with dot and HT.";
 
+  private static final String HTML_BODY = "this is html text <a href=\"http://vertx.io\">vertx.io</a>";
+
   private final PubSecKeyOptions pubSecKeyOptions = new PubSecKeyOptions().setSymmetric(false)
     .setSecretKey(privateKey).setPublicKey(pubKeyStr);
   private final String IDENTITY = "f r;om@example.com";
@@ -265,6 +267,33 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
       testContext.assertEquals(2, multiPart.getCount());
       testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
       testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
+  }
+
+  @Test
+  public void testMailRelaxedRelaxedHtmlWithAttachment(TestContext testContext) {
+    this.testContext = testContext;
+    Buffer img = vertx.fileSystem().readFileBlocking("logo-white-big.png");
+    testContext.assertTrue(img.length() > 0);
+    MailAttachment attachment = MailAttachment.create().setName("logo-white-big.png").setData(img);
+    MailAttachment inLineAttachment = MailAttachment.create().setName("logo-inline").setData(img);
+    MailMessage message = exampleMessage()
+      .setText(TEXT_BODY)
+      .setHtml(HTML_BODY)
+      .setInlineAttachment(inLineAttachment)
+      .setAttachment(attachment);
+
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
+      .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.RELAXED);
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+//      wiser.getMessages().get(0).dumpMessage(System.out);
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+//      MimeMultipart
+//      System.out.println(conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
+//      testContext.assertEquals(HTML_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
+//      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
       testDKIMSign(dkimOps, testContext);
     });
   }

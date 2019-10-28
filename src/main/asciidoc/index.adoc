@@ -116,6 +116,8 @@ A mail is sent as follows:
 {@link examples.MailExamples#sendMail}
 ----
 
+== Sending
+
 == Mail-client data objects
 
 === MailMessage properties

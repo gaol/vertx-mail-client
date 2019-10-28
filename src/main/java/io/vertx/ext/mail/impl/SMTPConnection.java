@@ -141,6 +141,7 @@ class SMTPConnection {
     if (mayLog) {
       log.debug(str);
     }
+    System.err.println(str);
     if (ns.writeQueueFull()) {
       ns.drainHandler(v -> {
         // avoid getting confused by being called twice
