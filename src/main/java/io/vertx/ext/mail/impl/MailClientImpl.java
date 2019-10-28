@@ -151,14 +151,15 @@ public class MailClientImpl implements MailClient {
     final MailEncoder encoder = new MailEncoder(email, hostname);
     final EncodedPart encodedPart = encoder.encodeMail();
     final String messageId = encoder.getMessageID();
-    final SMTPSendMail sendMail = new SMTPSendMail(conn, email, config, encodedPart, messageId, result -> {
+    final Handler<AsyncResult<MailResult>> sentResultHandler = result -> {
       if (result.succeeded()) {
         conn.returnToPool();
       } else {
         conn.setBroken();
       }
       returnResult(result, resultHandler, context);
-    });
+    };
+    final SMTPSendMail sendMail = new SMTPSendMail(conn, email, config, encodedPart, messageId, sentResultHandler);
     if (dkimSigners.isEmpty()) {
       sendMail.start();
     } else {
@@ -167,7 +168,7 @@ public class MailClientImpl implements MailClient {
         if (dkim.succeeded()) {
           sendMail.start();
         } else {
-          handleError(dkim.cause(), resultHandler, context);
+          sentResultHandler.handle(Future.failedFuture(dkim.cause()));
         }
       }));
     }

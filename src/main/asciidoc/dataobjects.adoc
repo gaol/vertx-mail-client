@@ -21,7 +21,7 @@ Sets the Agent or User Identifier(AUID)
 |[[bodyCanonic]]`@bodyCanonic`|`link:enums.html#MessageCanonic[MessageCanonic]`|+++
 Sets the message canonicalization for email body.
 +++
-|[[bodyLimit]]`@bodyLimit`|`Number (long)`|+++
+|[[bodyLimit]]`@bodyLimit`|`Number (int)`|+++
 Sets the body limit to sign.
 +++
 |[[copiedHeaders]]`@copiedHeaders`|`Array of String`|+++

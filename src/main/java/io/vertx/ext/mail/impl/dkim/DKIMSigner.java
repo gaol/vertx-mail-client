@@ -35,7 +35,7 @@ import java.security.spec.InvalidKeySpecException;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -190,13 +190,13 @@ public class DKIMSigner {
         if (logger.isDebugEnabled()) {
           logger.debug("DKIM Body Hash: " + bh);
         }
-        final StringBuilder dkimTagListBuilder = dkimTagList(encodedMessage).append("bh=").append(bh).append("; b=");
-        String dkimSignHeaderCanonic = canonicHeader(DKIM_SIGNATURE_HEADER, dkimTagListBuilder.toString());
-        final String tobeSigned = headersToSign(encodedMessage).append(dkimSignHeaderCanonic).toString();
-        if (logger.isDebugEnabled()) {
-          logger.debug("To be signed DKIM header: " + tobeSigned);
-        }
         try {
+          final StringBuilder dkimTagListBuilder = dkimTagList(encodedMessage).append("bh=").append(bh).append("; b=");
+          String dkimSignHeaderCanonic = canonicHeader(DKIM_SIGNATURE_HEADER, dkimTagListBuilder.toString());
+          final String tobeSigned = headersToSign(encodedMessage).append(dkimSignHeaderCanonic).toString();
+          if (logger.isDebugEnabled()) {
+            logger.debug("To be signed DKIM header: " + tobeSigned);
+          }
           String returnStr;
           synchronized (signatureService) {
             signatureService.update(tobeSigned.getBytes());
@@ -207,8 +207,7 @@ public class DKIMSigner {
             logger.debug(DKIM_SIGNATURE_HEADER + ": " + returnStr);
           }
           promise.complete(returnStr);
-        } catch (SignatureException e) {
-          logger.warn("Failed to sign the email", e);
+        } catch (Exception e) {
           promise.fail(e);
         }
       } else {
@@ -227,7 +226,7 @@ public class DKIMSigner {
     }
     String lines = sb.toString().replaceFirst("[\r\n]*$", "\r\n");
     if (dkimSignOptions.getBodyLimit() > 0 && dkimSignOptions.getBodyLimit() < lines.length()) {
-      lines = lines.substring(0, (int)dkimSignOptions.getBodyLimit());
+      lines = lines.substring(0, dkimSignOptions.getBodyLimit());
     }
     return lines;
   }
@@ -242,7 +241,7 @@ public class DKIMSigner {
   }
 
   // the attachPart is a base64 encoded stream already when this method is called.
-  private void walkThroughAttachStream(MessageDigest md, ReadStream<Buffer> stream, AtomicLong written, Promise<Void> promise) {
+  private void walkThroughAttachStream(MessageDigest md, ReadStream<Buffer> stream, AtomicInteger written, Promise<Void> promise) {
     stream.pipe().to(new WriteStream<Buffer>() {
       private AtomicBoolean ended = new AtomicBoolean(false);
 
@@ -294,11 +293,11 @@ public class DKIMSigner {
     }, promise);
   }
 
-  private boolean digest(MessageDigest md, byte[] bytes, AtomicLong written) {
+  private boolean digest(MessageDigest md, byte[] bytes, AtomicInteger written) {
     if (this.dkimSignOptions.getBodyLimit() > 0) {
-      long left = this.dkimSignOptions.getBodyLimit() - written.get();
+      int left = this.dkimSignOptions.getBodyLimit() - written.get();
       if (left > 0) {
-        int len = Math.min((int)left, bytes.length);
+        int len = Math.min(left, bytes.length);
         md.update(bytes, 0, len);
         written.getAndAdd(len);
       } else {
@@ -311,9 +310,9 @@ public class DKIMSigner {
   }
 
   private void walkThroughMultiPart(Context context, MessageDigest md, EncodedPart multiPart, int index,
-                                    AtomicLong written, Promise<Void> promise) {
+                                    AtomicInteger written, Promise<Void> promise) {
     String boundaryStart = "--" + multiPart.boundary() + "\r\n";
-    String boundaryEnd = "--" + multiPart.boundary() + "--";// no \r\n for boundary end
+    String boundaryEnd = "--" + multiPart.boundary() + "--";
     if (index < multiPart.parts().size()) {
       EncodedPart part = multiPart.parts().get(index);
 
@@ -372,22 +371,30 @@ public class DKIMSigner {
         Promise<Void> promise = Promise.promise();
         promise.future().setHandler(r -> {
           if (r.succeeded()) {
-            // MD has been updated through reading the whole multipart message.
-            String bh = Base64.getEncoder().encodeToString(md.digest());
-            bodyHashPromise.complete(bh);
+            try {
+              // MD has been updated through reading the whole multipart message.
+              String bh = Base64.getEncoder().encodeToString(md.digest());
+              bodyHashPromise.complete(bh);
+            } catch (Exception e) {
+              bodyHashPromise.fail(e);
+            }
           } else {
             bodyHashPromise.fail(r.cause());
           }
         });
-        walkThroughMultiPart(context, md, encodedMessage, 0, new AtomicLong(), promise);
+        walkThroughMultiPart(context, md, encodedMessage, 0, new AtomicInteger(), promise);
       } catch (Exception e) {
         bodyHashPromise.fail(e);
       }
     } else {
-      HashingAlgorithm hashingAlgorithm = hashingStrategy.get(dkimSignOptions.getSignAlgo().getHashAlgoId());
-      String canonicBody = dkimMailBody(encodedMessage, this.dkimSignOptions);
-      String bh = hashingAlgorithm.hash(null, canonicBody);
-      bodyHashPromise.complete(bh);
+      try {
+        HashingAlgorithm hashingAlgorithm = hashingStrategy.get(dkimSignOptions.getSignAlgo().getHashAlgoId());
+        String canonicBody = dkimMailBody(encodedMessage, this.dkimSignOptions);
+        String bh = hashingAlgorithm.hash(null, canonicBody);
+        bodyHashPromise.complete(bh);
+      } catch (Exception e) {
+        bodyHashPromise.fail(e);
+      }
     }
     return bodyHashPromise.future();
   }

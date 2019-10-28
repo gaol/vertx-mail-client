@@ -317,7 +317,6 @@ class SMTPSendMail {
           // send body string line by line
           sendBodyLineByLine(part.body().split("\n"), 0, promise);
         } else {
-          System.out.println("Start Stream Pipline. " + Thread.currentThread());
           // send attachment ReadStream as Base64 encoding
           ReadStream<Buffer> attachBodyStream = part.bodyStream(connection.getContext());
           if (attachBodyStream != null) {

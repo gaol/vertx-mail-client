@@ -37,6 +37,8 @@ import org.junit.runner.RunWith;
 import javax.mail.internet.MimeMultipart;
 import java.io.ByteArrayInputStream;
 import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static io.vertx.ext.mail.TestUtils.*;
 
@@ -76,8 +78,9 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
   private final PubSecKeyOptions pubSecKeyOptions = new PubSecKeyOptions().setSymmetric(false)
     .setSecretKey(privateKey).setPublicKey(pubKeyStr);
+  private final String IDENTITY = "f r;om@example.com";
   private final DKIMSignOptions dkimOptionsBase = new DKIMSignOptions().setPubSecKeyOptions(pubSecKeyOptions)
-    .setAuid("from@example.com").setSdid("example.com").setSelector("lgao").setSignAlgo(DKIMSignAlgorithm.RSA_SHA256);
+    .setAuid(IDENTITY).setSdid("example.com").setSelector("lgao").setSignAlgo(DKIMSignAlgorithm.RSA_SHA256);
 
   private MailClient dkimMailClient(DKIMSignOptions dkimOps) {
     return MailClient.createNonShared(vertx, configLogin().setEnableDKIM(true).addDKIMOption(dkimOps));
@@ -144,6 +147,18 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
   }
 
   @Test
+  public void testMailRelaxedSimplePlainWithLargeLimit(TestContext testContext) {
+    this.testContext = testContext;
+    MailMessage message = exampleMessage().setText(TEXT_BODY);
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase).setBodyLimit(Integer.MAX_VALUE)
+      .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.SIMPLE);
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      testContext.assertEquals(TEXT_BODY + "\n", TestUtils.conv2nl(TestUtils.inputStreamToString(wiser.getMessages().get(0).getMimeMessage().getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
+  }
+
+  @Test
   public void testMailRelaxedSimplePlain(TestContext testContext) {
     this.testContext = testContext;
     MailMessage message = exampleMessage().setText(TEXT_BODY);
@@ -153,6 +168,29 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
       testContext.assertEquals(TEXT_BODY + "\n", TestUtils.conv2nl(TestUtils.inputStreamToString(wiser.getMessages().get(0).getMimeMessage().getInputStream())));
       testDKIMSign(dkimOps, testContext);
     });
+  }
+
+  @Test
+  public void testMailSimpleSimplePlainFullOptions(TestContext testContext) {
+    this.testContext = testContext;
+    MailMessage message = exampleMessage().setText(TEXT_BODY);
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase).setExpireTime(2000)
+      .setCopiedHeaders(Stream.of("From", "To").collect(Collectors.toList()))
+      .setHeaderCanonic(MessageCanonic.SIMPLE).setBodyCanonic(MessageCanonic.SIMPLE);
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      testContext.assertEquals(TEXT_BODY + "\n", TestUtils.conv2nl(TestUtils.inputStreamToString(wiser.getMessages().get(0).getMimeMessage().getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
+  }
+
+  @Test
+  public void testMailSPlainNonExistedCopiedHeaders(TestContext testContext) {
+    this.testContext = testContext;
+    MailMessage message = exampleMessage().setText(TEXT_BODY);
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase).setExpireTime(2000)
+      .setCopiedHeaders(Stream.of("From", "Not-Existed-Header").collect(Collectors.toList()))
+      .setHeaderCanonic(MessageCanonic.SIMPLE).setBodyCanonic(MessageCanonic.SIMPLE);
+    testException(dkimMailClient(dkimOps), message, RuntimeException.class);
   }
 
   @Test
@@ -233,7 +271,6 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
   @Test
   public void testMailSimpleSimpleAttachmentStream(TestContext testContext) {
-    System.setProperty("vertx.mail.attachment.cache.file", "true");
     this.testContext = testContext;
     String path = "logo-white-big.png";
     Buffer img = vertx.fileSystem().readFileBlocking(path);
@@ -247,19 +284,13 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
       final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
       testContext.assertEquals(2, multiPart.getCount());
       testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
-      byte[] orginal = img.getBytes();
-      byte[] sent = inputStreamToBytes(multiPart.getBodyPart(1).getInputStream());
-      if (!Arrays.equals(orginal, sent)) {
-        System.out.println("DEBUG::: original bytes: " + orginal.length + ", received bytes: " + sent.length);
-      }
-      testContext.assertTrue(Arrays.equals(orginal, sent));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
       testDKIMSign(dkimOps, testContext);
     });
   }
 
   @Test
   public void testMailSimpleRelaxedAttachmentStream(TestContext testContext) {
-    System.setProperty("vertx.mail.attachment.cache.file", "true");
     this.testContext = testContext;
     String path = "logo-white-big.png";
     Buffer img = vertx.fileSystem().readFileBlocking(path);
@@ -273,19 +304,13 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
       final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
       testContext.assertEquals(2, multiPart.getCount());
       testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
-      byte[] orginal = img.getBytes();
-      byte[] sent = inputStreamToBytes(multiPart.getBodyPart(1).getInputStream());
-      if (!Arrays.equals(orginal, sent)) {
-        System.out.println("DEBUG::: original bytes: " + orginal.length + ", received bytes: " + sent.length);
-      }
-      testContext.assertTrue(Arrays.equals(orginal, sent));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
       testDKIMSign(dkimOps, testContext);
     });
   }
 
   @Test
   public void testMailRelaxedSimpleAttachmentStream(TestContext testContext) {
-    System.setProperty("vertx.mail.attachment.cache.file", "false");
     this.testContext = testContext;
     String path = "logo-white-big.png";
     Buffer img = vertx.fileSystem().readFileBlocking(path);
@@ -299,19 +324,13 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
       final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
       testContext.assertEquals(2, multiPart.getCount());
       testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
-      byte[] orginal = img.getBytes();
-      byte[] sent = inputStreamToBytes(multiPart.getBodyPart(1).getInputStream());
-      if (!Arrays.equals(orginal, sent)) {
-        System.out.println("DEBUG::: original bytes: " + orginal.length + ", received bytes: " + sent.length);
-      }
-      testContext.assertTrue(Arrays.equals(orginal, sent));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
       testDKIMSign(dkimOps, testContext);
     });
   }
 
   @Test
   public void testMailRelaxedRelaxedAttachmentStream(TestContext testContext) {
-    System.setProperty("vertx.mail.attachment.cache.file", "false");
     this.testContext = testContext;
     String path = "logo-white-big.png";
     Buffer img = vertx.fileSystem().readFileBlocking(path);
@@ -325,12 +344,47 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
       final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
       testContext.assertEquals(2, multiPart.getCount());
       testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
-      byte[] orginal = img.getBytes();
-      byte[] sent = inputStreamToBytes(multiPart.getBodyPart(1).getInputStream());
-      if (!Arrays.equals(orginal, sent)) {
-        System.out.println("DEBUG::: original bytes: " + orginal.length + ", received bytes: " + sent.length);
-      }
-      testContext.assertTrue(Arrays.equals(orginal, sent));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
+  }
+
+  @Test
+  public void testMailRelaxedRelaxedAttachmentStreamWithLimit(TestContext testContext) {
+    this.testContext = testContext;
+    String path = "logo-white-big.png";
+    Buffer img = vertx.fileSystem().readFileBlocking(path);
+    ReadStream<Buffer> stream = vertx.fileSystem().openBlocking(path, new OpenOptions());
+    MailAttachment attachment = MailAttachment.create().setName("logo-white-big.png").setStream(stream).setSize(img.length());
+    MailMessage message = exampleMessage().setText(TEXT_BODY).setAttachment(attachment);
+
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase).setBodyLimit(50)
+      .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.RELAXED);
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
+  }
+
+  @Test
+  public void testMailRelaxedSimpleAttachmentStreamWithLimit(TestContext testContext) {
+    this.testContext = testContext;
+    String path = "logo-white-big.png";
+    Buffer img = vertx.fileSystem().readFileBlocking(path);
+    ReadStream<Buffer> stream = vertx.fileSystem().openBlocking(path, new OpenOptions());
+    MailAttachment attachment = MailAttachment.create().setName("logo-white-big.png").setStream(stream).setSize(img.length());
+    MailMessage message = exampleMessage().setText(TEXT_BODY).setAttachment(attachment);
+
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase).setBodyLimit(50)
+      .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.SIMPLE);
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
       testDKIMSign(dkimOps, testContext);
     });
   }
@@ -412,11 +466,30 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
       final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
       testContext.assertEquals(2, multiPart.getCount());
       testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
-      byte[] sent = inputStreamToBytes(multiPart.getBodyPart(1).getInputStream());
-      if (!Arrays.equals(fakeDataBytes, sent)) {
-        System.out.println("DEBUG::: original bytes: " + fakeDataBytes.length + ", received bytes: " + sent.length);
-      }
-      testContext.assertTrue(Arrays.equals(fakeDataBytes, sent));
+      testContext.assertTrue(Arrays.equals(fakeDataBytes, inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
+  }
+
+  @Test
+  public void testMailSimpleSimpleNonFileAttachmentStreamWithLimit(TestContext testContext) {
+    System.setProperty("vertx.mail.attachment.cache.file", "false");
+    this.testContext = testContext;
+    Buffer fakeData = fakeStreamData();
+    byte[] fakeDataBytes = fakeData.getBytes();
+    ReadStream<Buffer> fakeStream = new FakeReadStream(vertx.getOrCreateContext());
+    MailAttachment attachment = MailAttachment.create().setName("FakeStream")
+      .setStream(fakeStream)
+      .setSize(fakeDataBytes.length);
+    MailMessage message = exampleMessage().setText(TEXT_BODY).setAttachment(attachment);
+
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase).setBodyLimit(50)
+      .setHeaderCanonic(MessageCanonic.SIMPLE).setBodyCanonic(MessageCanonic.SIMPLE);
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(fakeDataBytes, inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
       testDKIMSign(dkimOps, testContext);
     });
   }
@@ -439,11 +512,30 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
       final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
       testContext.assertEquals(2, multiPart.getCount());
       testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
-      byte[] sent = inputStreamToBytes(multiPart.getBodyPart(1).getInputStream());
-      if (!Arrays.equals(fakeDataBytes, sent)) {
-        System.out.println("DEBUG::: original bytes: " + fakeDataBytes.length + ", received bytes: " + sent.length);
-      }
-      testContext.assertTrue(Arrays.equals(fakeDataBytes, sent));
+      testContext.assertTrue(Arrays.equals(fakeDataBytes, inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+      testDKIMSign(dkimOps, testContext);
+    });
+  }
+
+  @Test
+  public void testMailSimpleSimpleNonFileAttachmentStreamCacheInFileWithLimit(TestContext testContext) {
+    System.setProperty("vertx.mail.attachment.cache.file", "true");
+    this.testContext = testContext;
+    Buffer fakeData = fakeStreamData();
+    byte[] fakeDataBytes = fakeData.getBytes();
+    ReadStream<Buffer> fakeStream = new FakeReadStream(vertx.getOrCreateContext());
+    MailAttachment attachment = MailAttachment.create().setName("FakeStream")
+      .setStream(fakeStream)
+      .setSize(fakeDataBytes.length);
+    MailMessage message = exampleMessage().setText(TEXT_BODY).setAttachment(attachment);
+
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase).setBodyLimit(50)
+      .setHeaderCanonic(MessageCanonic.SIMPLE).setBodyCanonic(MessageCanonic.SIMPLE);
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(fakeDataBytes, inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
       testDKIMSign(dkimOps, testContext);
     });
   }
@@ -463,7 +555,6 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     ctx.assertEquals(DKIMSignAlgorithm.RSA_SHA256.getDKIMAlgoName(), signTags.get("a"));
     ctx.assertEquals(dkimOps.getHeaderCanonic().getCanonic() + "/" + dkimOps.getBodyCanonic().getCanonic(), signTags.get("c"));
     ctx.assertEquals("example.com", signTags.get("d"));
-    ctx.assertEquals("from@example.com", signTags.get("i"));
     ctx.assertEquals("lgao", signTags.get("s"));
     ctx.assertEquals(String.join(":", dkimOptionsBase.getSignedHeaders()), signTags.get("h"));
 
@@ -474,7 +565,7 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     SignatureRecord record = records.get(0);
     ctx.assertNotNull(record);
     ctx.assertEquals("lgao", record.getSelector());
-    ctx.assertEquals("from@example.com", record.getIdentity());
+    ctx.assertEquals(IDENTITY, record.getIdentity());
     ctx.assertEquals("example.com", record.getDToken());
     ctx.assertEquals("sha-256", record.getHashAlgo());
   }

@@ -52,7 +52,7 @@ public class DKIMSignOptions {
   private String selector;
   private MessageCanonic headerCanonic = MessageCanonic.SIMPLE;
   private MessageCanonic bodyCanonic = MessageCanonic.SIMPLE;
-  private long bodyLimit = -1L;
+  private int bodyLimit = -1;
   private boolean signatureTimestamp;
   private long expireTime = -1L;
   private List<String> copiedHeaders;
@@ -291,7 +291,7 @@ public class DKIMSignOptions {
    *
    * @return the body limit
    */
-  public long getBodyLimit() {
+  public int getBodyLimit() {
     return bodyLimit;
   }
 
@@ -301,7 +301,7 @@ public class DKIMSignOptions {
    * @param bodyLimit the body limit
    * @return a reference to this, so the API can be used fluently
    */
-  public DKIMSignOptions setBodyLimit(long bodyLimit) {
+  public DKIMSignOptions setBodyLimit(int bodyLimit) {
     if (bodyLimit <= 0) {
       throw new IllegalArgumentException("Body Limit to calculate the hash must be larger than 0");
     }
