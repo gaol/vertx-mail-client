@@ -351,6 +351,7 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
   @Test
   public void testMailRelaxedRelaxedHtmlWithAttachmentStream(TestContext testContext) {
+    System.setProperty("vertx.mail.attachment.cache.file", "true");
     this.testContext = testContext;
     Buffer img = vertx.fileSystem().readFileBlocking("logo-white-big.png");
     ReadStream<Buffer> stream = vertx.fileSystem().openBlocking("logo-white-big.png", new OpenOptions());
@@ -391,6 +392,7 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
   @Test
   public void testMailSimpleSimpleAttachmentStream(TestContext testContext) {
+    System.setProperty("vertx.mail.attachment.cache.file", "true");
     this.testContext = testContext;
     String path = "logo-white-big.png";
     Buffer img = vertx.fileSystem().readFileBlocking(path);
@@ -411,6 +413,7 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
   @Test
   public void testMailSimpleRelaxedAttachmentStream(TestContext testContext) {
+    System.setProperty("vertx.mail.attachment.cache.file", "false");
     this.testContext = testContext;
     String path = "logo-white-big.png";
     Buffer img = vertx.fileSystem().readFileBlocking(path);
@@ -431,6 +434,7 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
   @Test
   public void testMailRelaxedSimpleAttachmentStream(TestContext testContext) {
+    System.setProperty("vertx.mail.attachment.cache.file", "true");
     this.testContext = testContext;
     String path = "logo-white-big.png";
     Buffer img = vertx.fileSystem().readFileBlocking(path);
@@ -451,6 +455,7 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
   @Test
   public void testMailRelaxedRelaxedAttachmentStream(TestContext testContext) {
+    System.setProperty("vertx.mail.attachment.cache.file", "false");
     this.testContext = testContext;
     String path = "logo-white-big.png";
     Buffer img = vertx.fileSystem().readFileBlocking(path);
@@ -471,6 +476,7 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
   @Test
   public void testMailRelaxedRelaxedAttachmentStreamWithLimit(TestContext testContext) {
+    System.setProperty("vertx.mail.attachment.cache.file", "true");
     this.testContext = testContext;
     String path = "logo-white-big.png";
     Buffer img = vertx.fileSystem().readFileBlocking(path);
@@ -491,6 +497,7 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
 
   @Test
   public void testMailRelaxedSimpleAttachmentStreamWithLimit(TestContext testContext) {
+    System.setProperty("vertx.mail.attachment.cache.file", "false");
     this.testContext = testContext;
     String path = "logo-white-big.png";
     Buffer img = vertx.fileSystem().readFileBlocking(path);

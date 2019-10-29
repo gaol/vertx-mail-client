@@ -97,6 +97,9 @@ class AttachmentPart extends EncodedPart {
     if (attachStream == null) {
       return null;
     }
+//    if (attachStream instanceof AsyncFile) {
+//      ((AsyncFile)attachStream).setReadPos(0L);
+//    }
     return new BodyReadStream(context, attachStream, false);
   }
 
@@ -141,15 +144,14 @@ class AttachmentPart extends EncodedPart {
     private Handler<Void> endHandler;
     private boolean caching;
     private AtomicBoolean streamEnded = new AtomicBoolean();
-    private final boolean tryReset;
 
     private BodyReadStream(Context context, ReadStream<Buffer> stream, boolean tryReset) {
       Objects.requireNonNull(stream, "ReadStream cannot be null");
       this.stream = stream;
       this.context = context;
       this.streamBuffer = Buffer.buffer();
-      this.tryReset = tryReset;
-      if (tryReset && !(stream instanceof AsyncFile)) {
+//      if (tryReset && !(stream instanceof AsyncFile)) {
+      if (tryReset) {
         // cache
         if (CACHE_IN_FILE) {
           cacheInFile = true;
@@ -246,18 +248,14 @@ class AttachmentPart extends EncodedPart {
 
     private synchronized void checkEnd() {
       if (streamEnded.get() && !caching) {
-        if (tryReset) {
-          if (cacheInFile) {
-            // cache in an AsyncFile
-            AttachmentPart.this.attachment.setStream(cachedFile);
-            AttachmentPart.this.cachedFilePath = cachedFilePath;
-          } else if (cacheInMemory) {
-            // next read will be the body in memory.
-            part = Utils.base64(cachedBuffer.getBytes());
-          } else {
-            // this must be AsyncFile case
-            ((AsyncFile)this.stream).setReadPos(0L);
-          }
+        if (cacheInFile) {
+          // cache in an AsyncFile
+          AttachmentPart.this.attachment.setStream(cachedFile);
+          AttachmentPart.this.cachedFilePath = cachedFilePath;
+          handleEventInContext(endHandler, null);
+        } else if (cacheInMemory) {
+          // next read will be the body in memory.
+          part = Utils.base64(cachedBuffer.getBytes());
           handleEventInContext(endHandler, null);
         } else {
           // normal stream, may need to delete the cached file if the cachedFilePath is not null
