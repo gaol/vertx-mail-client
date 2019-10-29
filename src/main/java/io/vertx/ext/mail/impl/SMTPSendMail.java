@@ -215,35 +215,34 @@ class SMTPSendMail {
   }
 
   private void sendMaildata(Promise<Void> promise) {
-    EncodedPart part = this.encodedPart;
-    if (isMultiPart(part)) {
-      Promise<Void> mailHeaderPromise = Promise.promise();
-      mailHeaderPromise.future().setHandler(v -> {
-        if (v.succeeded()) {
+    final EncodedPart part = this.encodedPart;
+    sendMailHeaders(part.headers().entries()).setHandler(v -> {
+      if (v.succeeded()) {
+        if (isMultiPart(part)) {
           sendMultiPart(part, 0, promise);
         } else {
-          promise.fail(v.cause());
+          sendRegularPartBody(part, promise);
         }
-      });
-      sendMailHeaders(part.headers().entries(), 0, mailHeaderPromise);
-    } else {
-      sendRegularPart(part, promise);
-    }
+      } else {
+        promise.fail(v.cause());
+      }
+    });
   }
 
   private void sendMultiPart(EncodedPart multiPart, final int i, Promise<Void> promise) {
     try {
       final String boundaryStart = "--" + multiPart.boundary();
-      final String boundaryEnd = boundaryStart + "--";
       final EncodedPart thePart = multiPart.parts().get(i);
 
       Promise<Void> boundaryStartPromise = Promise.promise();
-      boundaryStartPromise.future().setHandler(v -> {
+      boundaryStartPromise.future()
+        .compose(v -> sendMailHeaders(thePart.headers().entries())).setHandler(v -> {
         if (v.succeeded()) {
           Promise<Void> nextPromise = Promise.promise();
           nextPromise.future().setHandler(vv -> {
             if (vv.succeeded()) {
               if (i == multiPart.parts().size() - 1) {
+                String boundaryEnd = boundaryStart + "--";
                 connection.writeLineWithDrainPromise(boundaryEnd, written.getAndAdd(boundaryEnd.length()) < 1000, promise);
               } else {
                 sendMultiPart(multiPart, i + 1, promise);
@@ -253,17 +252,9 @@ class SMTPSendMail {
             }
           });
           if (isMultiPart(thePart)) {
-            Promise<Void> thePartHeaders = Promise.promise();
-            thePartHeaders.future().setHandler(vv -> {
-              if (vv.succeeded()) {
-                sendMultiPart(thePart, 0, nextPromise);
-              } else {
-                promise.fail(vv.cause());
-              }
-            });
-            sendMailHeaders(thePart.headers().entries(), 0, thePartHeaders);
+            sendMultiPart(thePart, 0, nextPromise);
           } else {
-            sendRegularPart(thePart, nextPromise);
+            sendRegularPartBody(thePart, nextPromise);
           }
         } else {
           promise.fail(v.cause());
@@ -279,6 +270,12 @@ class SMTPSendMail {
     return part.parts() != null && part.parts().size() > 0;
   }
 
+  private Future<Void> sendMailHeaders(List<Map.Entry<String, String>> headers) {
+    Promise<Void> promise = Promise.promise();
+    sendMailHeaders(headers, 0, promise);
+    return promise.future();
+  }
+
   private void sendMailHeaders(List<Map.Entry<String, String>> headers, int i, Promise<Void> promise) {
     if (i < headers.size()) {
       String entryString = headers.get(i).toString();
@@ -292,7 +289,6 @@ class SMTPSendMail {
       });
       connection.writeLineWithDrainPromise(entryString, written.getAndAdd(entryString.length()) < 1000, next);
     } else {
-      // \r\n between headers and body
       connection.writeLineWithDrainPromise("", written.get() < 1000, promise);
     }
   }
@@ -317,27 +313,18 @@ class SMTPSendMail {
     }
   }
 
-  private void sendRegularPart(EncodedPart part, Promise<Void> promise) {
-    Promise<Void> bodyPromise = Promise.promise();
-    bodyPromise.future().setHandler(v -> {
-      if (v.succeeded()) {
-        if (part.body() != null) {
-          // send body string line by line
-          sendBodyLineByLine(part.body().split("\n"), 0, promise);
-        } else {
-          // send attachment ReadStream as Base64 encoding
-          ReadStream<Buffer> attachBodyStream = part.bodyStream(connection.getContext());
-          if (attachBodyStream != null) {
-            attachBodyStream.pipe().endOnComplete(false).to(connection.getSocket(), promise);
-          } else {
-            promise.fail(new IllegalStateException("No mail body and stream found"));
-          }
-        }
+  private void sendRegularPartBody(EncodedPart part, Promise<Void> promise) {
+    if (part.body() != null) {
+      // send body string line by line
+      sendBodyLineByLine(part.body().split("\n"), 0, promise);
+    } else {
+      ReadStream<Buffer> attachBodyStream = part.bodyStream(connection.getContext());
+      if (attachBodyStream != null) {
+        attachBodyStream.pipe().endOnComplete(false).to(connection.getSocket(), promise);
       } else {
-        promise.fail(v.cause());
+        promise.fail(new IllegalStateException("No mail body and stream found"));
       }
-    });
-    sendMailHeaders(part.headers().entries(), 0, bodyPromise);
+    }
   }
 
 }

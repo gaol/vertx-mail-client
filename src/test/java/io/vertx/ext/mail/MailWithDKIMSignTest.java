@@ -287,13 +287,104 @@ public class MailWithDKIMSignTest extends SMTPTestWiser {
     DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
       .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.RELAXED);
     testSuccess(dkimMailClient(dkimOps), message, () -> {
-//      wiser.getMessages().get(0).dumpMessage(System.out);
+
+      // 1. alternative multi part
+      //    1.1: text part
+      //    1.2: html multi part with inline attachment
+      //       1.2.1: html body part
+      //       1.2.2: inline attachment
+      // 2. attachment part
       final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
       testContext.assertEquals(2, multiPart.getCount());
-//      MimeMultipart
-//      System.out.println(conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
-//      testContext.assertEquals(HTML_BODY, conv2nl(inputStreamToString(multiPart.getBodyPart(0).getInputStream())));
-//      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+      MimeMultipart alternative = (MimeMultipart)multiPart.getBodyPart(0).getContent();
+      testContext.assertEquals(2, alternative.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(alternative.getBodyPart(0).getInputStream())));
+      MimeMultipart htmlPart = (MimeMultipart)alternative.getBodyPart(1).getContent();
+      testContext.assertEquals(2, htmlPart.getCount());
+      testContext.assertEquals(HTML_BODY, conv2nl(inputStreamToString(htmlPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(htmlPart.getBodyPart(1).getInputStream())));
+
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+
+      testDKIMSign(dkimOps, testContext);
+    });
+  }
+
+  @Test
+  public void testMailRelaxedRelaxedHtmlWithAttachmentWithLimit(TestContext testContext) {
+    this.testContext = testContext;
+    Buffer img = vertx.fileSystem().readFileBlocking("logo-white-big.png");
+    testContext.assertTrue(img.length() > 0);
+    MailAttachment attachment = MailAttachment.create().setName("logo-white-big.png").setData(img);
+    MailAttachment inLineAttachment = MailAttachment.create().setName("logo-inline").setData(img);
+    MailMessage message = exampleMessage()
+      .setText(TEXT_BODY)
+      .setHtml(HTML_BODY)
+      .setInlineAttachment(inLineAttachment)
+      .setAttachment(attachment);
+
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase).setBodyLimit(200)
+      .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.RELAXED);
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+
+      // 1. alternative multi part
+      //    1.1: text part
+      //    1.2: html multi part with inline attachment
+      //       1.2.1: html body part
+      //       1.2.2: inline attachment
+      // 2. attachment part
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+      MimeMultipart alternative = (MimeMultipart)multiPart.getBodyPart(0).getContent();
+      testContext.assertEquals(2, alternative.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(alternative.getBodyPart(0).getInputStream())));
+      MimeMultipart htmlPart = (MimeMultipart)alternative.getBodyPart(1).getContent();
+      testContext.assertEquals(2, htmlPart.getCount());
+      testContext.assertEquals(HTML_BODY, conv2nl(inputStreamToString(htmlPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(htmlPart.getBodyPart(1).getInputStream())));
+
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+
+      testDKIMSign(dkimOps, testContext);
+    });
+  }
+
+  @Test
+  public void testMailRelaxedRelaxedHtmlWithAttachmentStream(TestContext testContext) {
+    this.testContext = testContext;
+    Buffer img = vertx.fileSystem().readFileBlocking("logo-white-big.png");
+    ReadStream<Buffer> stream = vertx.fileSystem().openBlocking("logo-white-big.png", new OpenOptions());
+    testContext.assertTrue(img.length() > 0);
+    MailAttachment attachment = MailAttachment.create().setName("logo-white-big.png").setSize(img.length()).setStream(stream);
+    MailAttachment inLineAttachment = MailAttachment.create().setName("logo-inline").setData(img);
+    MailMessage message = exampleMessage()
+      .setText(TEXT_BODY)
+      .setHtml(HTML_BODY)
+      .setInlineAttachment(inLineAttachment)
+      .setAttachment(attachment);
+
+    DKIMSignOptions dkimOps = new DKIMSignOptions(dkimOptionsBase)
+      .setHeaderCanonic(MessageCanonic.RELAXED).setBodyCanonic(MessageCanonic.RELAXED);
+    testSuccess(dkimMailClient(dkimOps), message, () -> {
+
+      // 1. alternative multi part
+      //    1.1: text part
+      //    1.2: html multi part with inline attachment
+      //       1.2.1: html body part
+      //       1.2.2: inline attachment
+      // 2. attachment part
+      final MimeMultipart multiPart = (MimeMultipart)wiser.getMessages().get(0).getMimeMessage().getContent();
+      testContext.assertEquals(2, multiPart.getCount());
+      MimeMultipart alternative = (MimeMultipart)multiPart.getBodyPart(0).getContent();
+      testContext.assertEquals(2, alternative.getCount());
+      testContext.assertEquals(TEXT_BODY, conv2nl(inputStreamToString(alternative.getBodyPart(0).getInputStream())));
+      MimeMultipart htmlPart = (MimeMultipart)alternative.getBodyPart(1).getContent();
+      testContext.assertEquals(2, htmlPart.getCount());
+      testContext.assertEquals(HTML_BODY, conv2nl(inputStreamToString(htmlPart.getBodyPart(0).getInputStream())));
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(htmlPart.getBodyPart(1).getInputStream())));
+
+      testContext.assertTrue(Arrays.equals(img.getBytes(), inputStreamToBytes(multiPart.getBodyPart(1).getInputStream())));
+
       testDKIMSign(dkimOps, testContext);
     });
   }

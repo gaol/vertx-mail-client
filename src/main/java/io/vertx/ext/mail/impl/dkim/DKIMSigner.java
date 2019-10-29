@@ -309,6 +309,20 @@ public class DKIMSigner {
     return true;
   }
 
+  private Future<Boolean> walkBoundaryStartAndHeadersFuture(MessageDigest md, String boundaryStart, EncodedPart part, AtomicInteger written) {
+    Promise<Boolean> promise = Promise.promise();
+    try {
+      StringBuilder sb = new StringBuilder();
+      sb.append(boundaryStart);
+      part.headers().entries().forEach(entry -> sb.append(entry.toString()).append("\r\n"));
+      sb.append("\r\n");
+      promise.complete(digest(md, sb.toString().getBytes(), written));
+    } catch (Exception e) {
+      promise.fail(e);
+    }
+    return promise.future();
+  }
+
   private void walkThroughMultiPart(Context context, MessageDigest md, EncodedPart multiPart, int index,
                                     AtomicInteger written, Promise<Void> promise) {
     String boundaryStart = "--" + multiPart.boundary() + "\r\n";
@@ -324,37 +338,39 @@ public class DKIMSigner {
           promise.fail(r.cause());
         }
       });
-      if (part.parts() != null && part.parts().size() > 0) {
-        // part is a multipart as well
-        walkThroughMultiPart(context, md, part, 0, written, nextPartPromise);
-      } else {
-        // part is a normal Part
-        StringBuilder sb = new StringBuilder();
-        sb.append(boundaryStart);
-        part.headers().entries().forEach(entry -> sb.append(entry.toString()).append("\r\n"));
-        sb.append("\r\n");
-        if(!digest(md, sb.toString().getBytes(), written)) {
-          nextPartPromise.complete();
-          return;
-        }
-        // body now
-        if (part.body() != null) {
-          Scanner scanner = new Scanner(part.body()).useDelimiter(DELIMITER);
-          while (scanner.hasNext()) {
-            if (!digest(md, canonicBodyLine(scanner.nextLine(), dkimSignOptions.getBodyCanonic()).getBytes(), written)) {
-              break;
+      // boundary and header, then body
+      walkBoundaryStartAndHeadersFuture(md, boundaryStart, part, written).setHandler(r -> {
+        if (r.succeeded()) {
+          if (r.result()) {
+            if (part.parts() != null && part.parts().size() > 0) {
+              // part is a multipart as well
+              walkThroughMultiPart(context, md, part, 0, written, nextPartPromise);
+            } else {
+              // walk through part body
+              if (part.body() != null) {
+                Scanner scanner = new Scanner(part.body()).useDelimiter(DELIMITER);
+                while (scanner.hasNext()) {
+                  if (!digest(md, canonicBodyLine(scanner.nextLine(), dkimSignOptions.getBodyCanonic()).getBytes(), written)) {
+                    break;
+                  }
+                }
+                nextPartPromise.complete();
+              } else {
+                ReadStream<Buffer> dkimAttachStream = part.dkimBodyStream(context);
+                if (dkimAttachStream != null) {
+                  walkThroughAttachStream(md, dkimAttachStream, written, nextPartPromise);
+                } else {
+                  nextPartPromise.fail("No data and stream found.");
+                }
+              }
             }
-          }
-          nextPartPromise.complete();
-        } else {
-          ReadStream<Buffer> dkimAttachStream = part.dkimBodyStream(context);
-          if (dkimAttachStream != null) {
-            walkThroughAttachStream(md, dkimAttachStream, written, nextPartPromise);
           } else {
-            nextPartPromise.fail("No data and stream found.");
+            promise.complete();
           }
+        } else {
+          promise.fail(r.cause());
         }
-      }
+      });
     } else {
       // after last part has been walked through
       digest(md, (boundaryEnd + "\r\n").getBytes(), written);
