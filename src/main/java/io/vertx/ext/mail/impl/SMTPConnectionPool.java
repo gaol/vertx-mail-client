@@ -17,43 +17,48 @@
 package io.vertx.ext.mail.impl;
 
 import io.vertx.core.AsyncResult;
+import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import io.vertx.core.impl.ContextInternal;
+import io.vertx.core.impl.EventLoopContext;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.net.NetClient;
+import io.vertx.core.net.NetSocket;
+import io.vertx.core.net.impl.clientconnection.ConnectResult;
+import io.vertx.core.net.impl.clientconnection.Endpoint;
+import io.vertx.core.net.impl.clientconnection.Lease;
+import io.vertx.core.net.impl.pool.ConnectionEventListener;
+import io.vertx.core.net.impl.pool.ConnectionPool;
+import io.vertx.core.net.impl.pool.Connector;
+import io.vertx.core.net.impl.pool.SimpleConnectionPool;
 import io.vertx.ext.auth.PRNG;
 import io.vertx.ext.mail.MailConfig;
 import io.vertx.ext.mail.StartTLSOptions;
 import io.vertx.ext.mail.impl.sasl.AuthOperationFactory;
 
-import java.util.ArrayDeque;
-import java.util.HashSet;
-import java.util.Queue;
-import java.util.Set;
 
-class SMTPConnectionPool implements ConnectionLifeCycleListener {
+class SMTPConnectionPool extends Endpoint<Lease<SMTPConnection>> implements Connector<SMTPConnection> {
 
   private static final Logger log = LoggerFactory.getLogger(SMTPConnectionPool.class);
 
-  private final int maxSockets;
   private final boolean keepAlive;
-  private final Queue<Waiter> waiters = new ArrayDeque<>();
-  private final Set<SMTPConnection> allConnections = new HashSet<>();
   private final NetClient netClient;
   private final MailConfig config;
   private final PRNG prng;
   private final AuthOperationFactory authOperationFactory;
-  private String hostname;
   private boolean closed = false;
-  private int connCount;
 
-  private Handler<Void> closeFinishedHandler;
+  private ConnectionPool<SMTPConnection> pool;
 
   SMTPConnectionPool(Vertx vertx, MailConfig config) {
+    super(() -> {
+      //TODO  dispose
+    });
     this.config = config;
-    maxSockets = config.getMaxPoolSize();
     keepAlive = config.isKeepAlive();
     this.prng = new PRNG(vertx);
     this.authOperationFactory = new AuthOperationFactory(prng);
@@ -67,193 +72,103 @@ class SMTPConnectionPool implements ConnectionLifeCycleListener {
     }
 
     netClient = vertx.createNetClient(config);
+    int maxSockets = config.getMaxPoolSize();
+    this.pool = new SimpleConnectionPool<>(this, maxSockets, maxSockets, -1);
+  }
+
+  @Override
+  public void requestConnection(ContextInternal ctx, Handler<AsyncResult<Lease<SMTPConnection>>> handler) {
+    pool.acquire((EventLoopContext) ctx, 1, handler);
+  }
+
+  @Override
+  public void connect(EventLoopContext context, ConnectionEventListener listener, Handler<AsyncResult<ConnectResult<SMTPConnection>>> handler) {
+    netClient.connect(config.getPort(), config.getHostname()).onComplete(ar -> {
+      if (ar.succeeded()) {
+        incRefCount();
+        NetSocket socket = ar.result();
+        SMTPConnection connection = new SMTPConnection(config, socket)
+          .setContext(context)
+          .setEvictionHandler(v -> {
+            decRefCount();
+            listener.remove();
+          });
+        handler.handle(Future.succeededFuture(new ConnectResult<>(connection, 1, 1)));
+      } else {
+        handler.handle(Future.failedFuture(ar.cause()));
+      }
+    });
+  }
+
+  @Override
+  public boolean isValid(SMTPConnection connection) {
+    return connection.isValid();
   }
 
   AuthOperationFactory getAuthOperationFactory() {
     return authOperationFactory;
   }
 
-  void getConnection(String hostname, Handler<AsyncResult<SMTPConnection>> resultHandler) {
+  void getConnection(String hostname, Context ctx, Handler<AsyncResult<SMTPConnection>> resultHandler) {
     log.debug("getConnection()");
-    this.hostname = hostname;
     if (closed) {
       resultHandler.handle(Future.failedFuture("connection pool is closed"));
     } else {
-      getConnection0(resultHandler);
+      ContextInternal ctxInternal = (ContextInternal)ctx;
+      Promise<Lease<SMTPConnection>> promise = ctx == null ? Promise.promise() : ctxInternal.promise();
+      promise.future().map(l -> l.get().setLease(l)).onComplete(cr -> {
+        if (cr.succeeded()) {
+          SMTPConnection conn = cr.result();
+          if (conn.isInitialized()) {
+            // RSET for reused connections.
+            new SMTPReset(conn, resultHandler).start();
+          } else {
+            SMTPStarter starter = new SMTPStarter(conn, this.config, hostname, authOperationFactory, resultHandler);
+            try {
+              conn.init(starter::serverGreeting);
+            } catch (Exception e) {
+              resultHandler.handle(Future.failedFuture(e));
+            }
+          }
+        } else {
+          resultHandler.handle(Future.failedFuture(cr.cause()));
+        }
+      });
+      requestConnection(ctxInternal, promise);
     }
   }
 
-  void close() {
-    close(null);
+  public void close() {
+    close(h -> {
+      super.close();
+      if (h.failed()) {
+        log.warn("Failed to close the pool", h.cause());
+      }
+      log.debug("SMTP connection pool closed.");
+    });
   }
 
-  synchronized void close(Handler<Void> finishedHandler) {
+  synchronized void close(Handler<AsyncResult<Void>> finishedHandler) {
     if (closed) {
       throw new IllegalStateException("pool is already closed");
     } else {
       closed = true;
-      closeFinishedHandler = finishedHandler;
-      closeAllConnections();
       this.prng.close();
-    }
-  }
-
-  synchronized int connCount() {
-    return connCount;
-  }
-
-  // Lifecycle methods
-
-  // Called when the send operation has finished
-  public synchronized void dataEnded(SMTPConnection conn) {
-    checkReuseConnection(conn);
-  }
-
-  // Called if the connection is actually closed OR the connection attempt
-  // failed - in the latter case conn will be null
-  public synchronized void connectionClosed(SMTPConnection conn) {
-    log.debug("connection closed, removing from pool");
-    connCount--;
-    if (conn != null) {
-      allConnections.remove(conn);
-    }
-    Waiter waiter = waiters.poll();
-    if (waiter != null) {
-      // There's a waiter - so it can have a new connection
-      log.debug("creating new connection for waiter");
-      createNewConnection(waiter.handler);
-    }
-    if (closed && connCount == 0) {
-      log.debug("all connections closed, closing NetClient");
-      netClient.close();
-      if (closeFinishedHandler != null) {
-        closeFinishedHandler.handle(null);
+      pool.close();
+      if (finishedHandler != null) {
+        this.netClient.close(finishedHandler);
+      } else {
+        this.netClient.close();
       }
     }
+  }
+
+  int connCount() {
+    return pool.size();
   }
 
   NetClient getNetClient() {
     return this.netClient;
   }
 
-  // Private methods
-
-  private synchronized void getConnection0(Handler<AsyncResult<SMTPConnection>> handler) {
-    SMTPConnection idleConn = null;
-    for (SMTPConnection conn : allConnections) {
-      if (!conn.isBroken() && conn.isIdle()) {
-        idleConn = conn;
-        break;
-      }
-    }
-    if (idleConn == null && connCount >= maxSockets) {
-      // Wait in queue
-      log.debug("waiting for a free socket");
-      waiters.add(new Waiter(handler));
-    } else {
-      if (idleConn == null) {
-        // Create a new connection
-        log.debug("create a new connection");
-        createNewConnection(handler);
-      } else {
-        if (idleConn.isClosed()) {
-          log.warn("idle connection is closed already, this may cause a problem");
-        }
-        // if we have found a connection, run a RSET command, this checks if the connection
-        // is really usable. If this fails, we create a new connection. we may run over the connection limit
-        // since the close operation is not finished before we open the new connection, however it will be closed
-        // shortly after
-        log.debug("found idle connection, checking");
-        final SMTPConnection conn = idleConn;
-        conn.useConnection();
-        conn.getContext().runOnContext(v -> new SMTPReset(conn, result -> {
-          if (result.succeeded()) {
-            handler.handle(Future.succeededFuture(conn));
-          } else {
-            conn.setBroken();
-            log.debug("using idle connection failed, create a new connection");
-            createNewConnection(handler);
-          }
-        }).start());
-      }
-    }
-  }
-
-  private synchronized void checkReuseConnection(SMTPConnection conn) {
-    if (conn.isBroken()) {
-      log.debug("connection is broken, closing");
-      conn.close();
-    } else {
-      // if the pool is disabled, just close the connection
-      if (!keepAlive || closed) {
-        log.debug("connection pool is disabled or pool is already closed, immediately doing QUIT");
-        conn.close();
-      } else {
-        log.debug("checking for waiting operations");
-        Waiter waiter = waiters.poll();
-        if (waiter != null) {
-          log.debug("running one waiting operation");
-          conn.useConnection();
-          waiter.handler.handle(Future.succeededFuture(conn));
-        } else {
-          log.debug("keeping connection idle");
-          conn.setIdle();
-        }
-      }
-    }
-  }
-
-  private void closeAllConnections() {
-    Set<SMTPConnection> copy;
-    if (connCount > 0) {
-      synchronized (this) {
-        copy = new HashSet<>(allConnections);
-        allConnections.clear();
-      }
-      // Close outside sync block to avoid deadlock
-      for (SMTPConnection conn : copy) {
-        if (conn.isIdle() || conn.isBroken()) {
-          conn.close();
-        } else {
-          log.debug("closing connection after current send operation finishes");
-          conn.setDoShutdown();
-        }
-      }
-    } else {
-      this.netClient.close();
-      if (closeFinishedHandler != null) {
-        closeFinishedHandler.handle(null);
-      }
-    }
-  }
-
-  private void createNewConnection(Handler<AsyncResult<SMTPConnection>> handler) {
-    connCount++;
-    log.debug("Connection count is " + connCount);
-    createConnection(result -> {
-      if (result.succeeded()) {
-        allConnections.add(result.result());
-      }
-      handler.handle(result);
-    });
-  }
-
-  private void createConnection(Handler<AsyncResult<SMTPConnection>> handler) {
-    SMTPConnection conn = new SMTPConnection(netClient, this);
-    new SMTPStarter(conn, config, hostname, this.authOperationFactory, result -> {
-      if (result.succeeded()) {
-        handler.handle(Future.succeededFuture(conn));
-      } else {
-        handler.handle(Future.failedFuture(result.cause()));
-      }
-    }).start();
-  }
-
-  private static class Waiter {
-    private final Handler<AsyncResult<SMTPConnection>> handler;
-
-    private Waiter(Handler<AsyncResult<SMTPConnection>> handler) {
-      this.handler = handler;
-    }
-  }
 }

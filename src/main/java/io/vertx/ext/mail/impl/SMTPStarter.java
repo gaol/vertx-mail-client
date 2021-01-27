@@ -37,9 +37,9 @@ class SMTPStarter {
   private final String hostname;
   private final MailConfig config;
   private final AuthOperationFactory authOperationFactory;
-  private final Handler<AsyncResult<Void>> handler;
+  private final Handler<AsyncResult<SMTPConnection>> handler;
 
-  SMTPStarter(SMTPConnection connection, MailConfig config, String hostname, AuthOperationFactory authOperationFactory, Handler<AsyncResult<Void>> handler) {
+  SMTPStarter(SMTPConnection connection, MailConfig config, String hostname, AuthOperationFactory authOperationFactory, Handler<AsyncResult<SMTPConnection>> handler) {
     this.connection = connection;
     this.hostname = hostname;
     this.config = config;
@@ -47,12 +47,7 @@ class SMTPStarter {
     this.handler = handler;
   }
 
-  void start() {
-    log.debug("connection.openConnection");
-    connection.openConnection(config, this::serverGreeting, this::handleError);
-  }
-
-  private void serverGreeting(String message) {
+  void serverGreeting(String message) {
     log.debug("SMTPInitialDialogue");
     new SMTPInitialDialogue(connection, config, hostname, v -> doAuthentication(), this::handleError).start(message);
   }
@@ -64,9 +59,6 @@ class SMTPStarter {
 
   private void handleError(Throwable throwable) {
     log.debug("handleError:" + throwable);
-    if (connection != null) {
-      connection.setBroken();
-    }
     handler.handle(Future.failedFuture(throwable));
   }
 
