@@ -49,6 +49,7 @@ class SMTPInitialDialogue {
     this.hostname = hostname;
     this.finishedHandler = finishedHandler;
     this.errorHandler = errorHandler;
+    this.connection.setErrorHandler(errorHandler);
   }
 
   public void start(final String message) {
@@ -120,7 +121,7 @@ class SMTPInitialDialogue {
           // on secure channel (e.g. googlemail)
           ehloCmd();
         } else {
-
+          errorHandler.handle(ar.cause());
         }
       });
     });
