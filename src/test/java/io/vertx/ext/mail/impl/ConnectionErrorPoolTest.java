@@ -68,10 +68,13 @@ public class ConnectionErrorPoolTest extends SMTPTestDummy {
     testContext.assertTrue(pool.connCount()>=0, "connCount() is " + pool.connCount());
 
     mailClient.sendMail(exampleMessage(), result -> {
+      System.out.println("mail 1st time");
       testContext.assertTrue(result.failed());
       testContext.assertTrue(pool.connCount()>=0, "connCount() is " + pool.connCount());
 
+      System.out.println("start 2nd time send");
       mailClient.sendMail(exampleMessage(), result2 -> {
+        System.out.println("2nd time done");
         testContext.assertTrue(result2.failed());
         testContext.assertTrue(pool.connCount()>=0, "connCount() is " + pool.connCount());
         async.complete();

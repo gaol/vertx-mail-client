@@ -52,7 +52,7 @@ public class SMTPConnectionPoolShutdownTest extends SMTPTestWiser {
 
     testContext.assertEquals(0, pool.connCount());
 
-    pool.getConnection("hostname", result -> {
+    pool.getConnection("hostname", vertx.getOrCreateContext(), result -> {
       if (result.succeeded()) {
         log.debug("got connection");
         testContext.assertEquals(1, pool.connCount());

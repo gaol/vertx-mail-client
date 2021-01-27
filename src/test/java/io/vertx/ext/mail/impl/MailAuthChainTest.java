@@ -17,6 +17,7 @@
 package io.vertx.ext.mail.impl;
 
 import io.vertx.ext.mail.MailClient;
+import io.vertx.ext.mail.MailConfig;
 import io.vertx.ext.mail.MailMessage;
 import io.vertx.ext.mail.SMTPTestDummy;
 import io.vertx.ext.unit.TestContext;
@@ -100,9 +101,7 @@ public class MailAuthChainTest extends SMTPTestDummy {
         "QUIT",
         "221 2.0.0 Bye"
       );
-      mailClient.sendMail(email, testContext.asyncAssertSuccess(r2 -> {
-        mailClient.close();
-      }));
+      vertx.setTimer(100, h -> mailClient.sendMail(email, testContext.asyncAssertSuccess(r2 -> mailClient.close())));
     }));
   }
 
@@ -217,9 +216,7 @@ public class MailAuthChainTest extends SMTPTestDummy {
         "QUIT",
         "221 2.0.0 Bye"
       );
-      mailClient.sendMail(email, testContext.asyncAssertSuccess(r2 -> {
-        mailClient.close();
-      }));
+      vertx.setTimer(100, h -> mailClient.sendMail(email, testContext.asyncAssertSuccess(r2 -> mailClient.close())));
     }));
   }
 

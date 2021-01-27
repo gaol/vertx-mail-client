@@ -61,18 +61,20 @@ public class MailPoolServerClosesTest extends SMTPTestDummy {
       if (result.succeeded()) {
         log.info(result.result().toString());
         mail1.complete();
-        log.info("starting mail 2");
-        mailClient.sendMail(email, result2 -> {
-          pass2.passOnce();
-          log.info("mail finished 2");
-          if (result2.succeeded()) {
-            log.info(result2.result().toString());
-            mailClient.close();
-            mail2.complete();
-          } else {
-            log.warn("got exception 2", result2.cause());
-            context.fail(result2.cause());
-          }
+        vertx.setTimer(50, h -> {
+          log.info("starting mail 2");
+          mailClient.sendMail(email, result2 -> {
+            pass2.passOnce();
+            log.info("mail finished 2");
+            if (result2.succeeded()) {
+              log.info(result2.result().toString());
+              mailClient.close();
+              mail2.complete();
+            } else {
+              log.warn("got exception 2", result2.cause());
+              context.fail(result2.cause());
+            }
+          });
         });
       } else {
         log.warn("got exception 1", result.cause());
@@ -108,18 +110,20 @@ public class MailPoolServerClosesTest extends SMTPTestDummy {
       if (result.succeeded()) {
         log.info(result.result().toString());
         mail1.complete();
-        log.info("starting mail 2");
-        mailClient.sendMail(email, result2 -> {
-          pass2.passOnce();
-          log.info("mail finished 2");
-          if (result2.succeeded()) {
-            log.info(result2.result().toString());
-            mailClient.close();
-            mail2.complete();
-          } else {
-            log.warn("got exception 2", result2.cause());
-            context.fail(result2.cause());
-          }
+        vertx.setTimer(1200, h -> {
+          log.info("starting mail 2");
+          mailClient.sendMail(email, result2 -> {
+            pass2.passOnce();
+            log.info("mail finished 2");
+            if (result2.succeeded()) {
+              log.info(result2.result().toString());
+              mailClient.close();
+              mail2.complete();
+            } else {
+              log.warn("got exception 2", result2.cause());
+              context.fail(result2.cause());
+            }
+          });
         });
       } else {
         log.warn("got exception 1", result.cause());
@@ -151,7 +155,7 @@ public class MailPoolServerClosesTest extends SMTPTestDummy {
     Async mail1 = context.async();
     Async mail2 = context.async();
 
-    MailClient mailClient = MailClient.create(vertx, configNoSSL());
+    MailClient mailClient = MailClient.create(vertx, configNoSSL().setKeepAlive(false));
 
     MailMessage email = exampleMessage();
 
