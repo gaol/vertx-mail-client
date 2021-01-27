@@ -54,11 +54,14 @@ class SMTPReset {
   }
 
   private void finished() {
+    connection.cleanHandlers();
     handler.handle(Future.succeededFuture(connection));
   }
 
   private void handleError(String message) {
+    connection.cleanHandlers();
     handler.handle(Future.failedFuture(message));
+    connection.shutdown();
   }
 
 }

@@ -17,6 +17,7 @@
 package io.vertx.ext.mail.impl;
 
 import io.vertx.core.AsyncResult;
+import io.vertx.core.CompositeFuture;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -40,26 +41,25 @@ import io.vertx.ext.mail.MailConfig;
 import io.vertx.ext.mail.StartTLSOptions;
 import io.vertx.ext.mail.impl.sasl.AuthOperationFactory;
 
+import java.util.List;
+import java.util.stream.Collectors;
+
 
 class SMTPConnectionPool extends Endpoint<Lease<SMTPConnection>> implements Connector<SMTPConnection> {
 
   private static final Logger log = LoggerFactory.getLogger(SMTPConnectionPool.class);
 
-  private final boolean keepAlive;
   private final NetClient netClient;
   private final MailConfig config;
   private final PRNG prng;
   private final AuthOperationFactory authOperationFactory;
   private boolean closed = false;
 
-  private ConnectionPool<SMTPConnection> pool;
+  private final ConnectionPool<SMTPConnection> pool;
 
   SMTPConnectionPool(Vertx vertx, MailConfig config) {
-    super(() -> {
-      //TODO  dispose
-    });
+    super(() -> log.debug("Connection Pool disposed."));
     this.config = config;
-    keepAlive = config.isKeepAlive();
     this.prng = new PRNG(vertx);
     this.authOperationFactory = new AuthOperationFactory(prng);
 
@@ -149,17 +149,40 @@ class SMTPConnectionPool extends Endpoint<Lease<SMTPConnection>> implements Conn
   }
 
   synchronized void close(Handler<AsyncResult<Void>> finishedHandler) {
+    log.debug("trying to close the connection pool");
     if (closed) {
       throw new IllegalStateException("pool is already closed");
     } else {
       closed = true;
       this.prng.close();
-      pool.close();
-      if (finishedHandler != null) {
-        this.netClient.close(finishedHandler);
-      } else {
-        this.netClient.close();
-      }
+      List<Future> conns = pool.close().stream()
+        .filter(f -> {
+          if (f.succeeded()) {
+            return f.result().isAvailable();
+          }
+          return true;
+        })
+        .map(f -> {
+          Promise<SMTPConnection> closePromise = Promise.promise();
+          f.result().close(closePromise);
+          return closePromise.future();
+        })
+        .collect(Collectors.toList());
+      CompositeFuture future = CompositeFuture.all(conns);
+      future.onComplete(h -> {
+        if (h.succeeded()) {
+          log.debug("Close the NetClient");
+          if (finishedHandler != null) {
+            this.netClient.close(finishedHandler);
+          } else {
+            this.netClient.close();
+          }
+        } else {
+          if (finishedHandler != null) {
+            finishedHandler.handle(Future.failedFuture(h.cause()));
+          }
+        }
+      });
     }
   }
 
