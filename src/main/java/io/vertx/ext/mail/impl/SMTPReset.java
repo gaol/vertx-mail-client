@@ -41,11 +41,7 @@ class SMTPReset {
   }
 
   public void start() {
-    connection.setErrorHandler(th -> {
-      log.info("exception on RSET " + th);
-      connection.shutdown();
-      handleError("exception on RSET " + th);
-    });
+    connection.setErrorHandler(th -> handleError("exception on RSET " + th));
     connection.write("RSET", message -> {
       log.debug("RSET result: " + message);
       if (!StatusCode.isStatusOk(message)) {
@@ -57,11 +53,8 @@ class SMTPReset {
     });
   }
 
-  /**
-   *
-   */
   private void finished() {
-    handler.handle(Future.succeededFuture(null));
+    handler.handle(Future.succeededFuture(connection));
   }
 
   private void handleError(String message) {

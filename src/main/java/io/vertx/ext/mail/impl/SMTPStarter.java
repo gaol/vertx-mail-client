@@ -54,7 +54,7 @@ class SMTPStarter {
 
   private void doAuthentication() {
     log.debug("SMTPAuthentication");
-    new SMTPAuthentication(connection, config, this.authOperationFactory, v -> handler.handle(Future.succeededFuture(null)), this::handleError).start();
+    new SMTPAuthentication(connection, config, this.authOperationFactory, v -> handler.handle(Future.succeededFuture(connection)), this::handleError).start();
   }
 
   private void handleError(Throwable throwable) {
