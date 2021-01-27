@@ -18,11 +18,9 @@ package io.vertx.ext.mail.impl;
 
 import io.vertx.core.*;
 import io.vertx.core.impl.ContextInternal;
-import io.vertx.core.impl.NoStackTraceThrowable;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.net.NetSocket;
-import io.vertx.core.net.impl.ConnectionBase;
 import io.vertx.core.net.impl.clientconnection.Lease;
 import io.vertx.ext.mail.MailConfig;
 
@@ -86,7 +84,7 @@ class SMTPConnection {
     }
     this.nsHandler = new MultilineParser(buffer -> {
       if (commandReplyHandler == null) {
-        log.debug("dropping reply arriving after we stopped processing the buffer.");
+        handleError(new IllegalStateException("dropping reply arriving after we stopped processing the buffer."));
       } else {
         // make sure we only call the handler once
         Handler<String> currentHandler = commandReplyHandler;
@@ -111,21 +109,25 @@ class SMTPConnection {
     }
   }
 
+  boolean isAvailable() {
+    return !socketClosed && !shutdown;
+  }
+
   boolean isValid() {
     return !socketClosed && !shutdown;
   }
 
   void handleNSClosed(Void v) {
-    log.debug("socket has been closed");
+    log.debug("handleNSClosed() - socket has been closed");
     socketClosed = true;
     if (!shutdown) {
+      handleError(new IOException("socket was closed unexpected."));
       shutdown();
-      handleError(new IOException("Socket closed unexpected."));
     }
     if (!evicted) {
       evicted = true;
       if (evictionHandler != null) {
-        log.debug("connection got evicted by closed");
+        log.debug("handleNSClosed() - connection got evicted by closed");
         evictionHandler.handle(null);
         cleanHandlers();
       }
@@ -151,21 +153,22 @@ class SMTPConnection {
 
   void shutdown() {
     shutdown = true;
-    log.debug("Close the socket and remove it from pool");
+    log.debug("shutdown() - shutdown and remove the connection from pool");
     if (!socketClosed) {
+      socketClosed = true;
       ns.close();
     }
     if (!evicted) {
       evicted = true;
       if (evictionHandler != null) {
-        log.debug("connection got evicted on shutdown");
+        log.debug("shutdown() - connection got evicted on shutdown");
         evictionHandler.handle(null);
         cleanHandlers();
       }
     }
   }
 
-  private void cleanHandlers() {
+  void cleanHandlers() {
     errorHandler = null;
     commandReplyHandler = null;
   }
@@ -261,14 +264,15 @@ class SMTPConnection {
     ns.upgradeToSsl(handler);
   }
 
-  Future<Void> returnToPool() {
-    Promise<Void> promise = context.promise();
+  Future<SMTPConnection> returnToPool() {
+    Promise<SMTPConnection> promise = context.promise();
     try {
       if (config.isKeepAlive()) {
         // recycle
         log.debug("recycle for next use");
+        cleanHandlers();
         lease.recycle();
-        promise.complete(null);
+        promise.complete(this);
       } else {
         quitCloseConnection(promise);
       }
@@ -282,10 +286,11 @@ class SMTPConnection {
    * send QUIT and close the connection, this operation waits for the success of the quit command but will close the
    * connection on exception as well
    */
-  private void quitCloseConnection(Promise<Void> promise) {
+  private void quitCloseConnection(Promise<SMTPConnection> promise) {
     Promise<Void> closePromise = Promise.promise();
     closePromise.future().flatMap(v -> {
       shutdown();
+      promise.complete(SMTPConnection.this);
       return promise.future();
     });
     writeLineWithDrainPromise("QUIT", true, closePromise);
@@ -298,7 +303,7 @@ class SMTPConnection {
   /**
    * close the connection doing a QUIT command first
    */
-  public void close(Promise<Void> promise) {
+  public void close(Promise<SMTPConnection> promise) {
     quitCloseConnection(promise);
   }
 
@@ -312,7 +317,7 @@ class SMTPConnection {
   /**
    * get the context associated with this connection
    *
-   * @return
+   * @return the context
    */
   Context getContext() {
     return context;

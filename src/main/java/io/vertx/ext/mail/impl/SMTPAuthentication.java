@@ -151,14 +151,17 @@ class SMTPAuthentication {
   }
 
   private void finished() {
+    connection.cleanHandlers();
     finishedHandler.handle(null);
   }
 
   private void handleError(String message) {
+    connection.cleanHandlers();
     errorHandler.handle(new NoStackTraceThrowable(message));
   }
 
   private void handleError(Throwable th) {
+    connection.cleanHandlers();
     errorHandler.handle(th);
   }
 

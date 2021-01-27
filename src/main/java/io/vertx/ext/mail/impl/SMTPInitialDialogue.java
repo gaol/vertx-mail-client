@@ -103,8 +103,10 @@ class SMTPInitialDialogue {
   }
 
   private void handleError(String message) {
+    connection.cleanHandlers();
     log.debug("handleError:" + message);
     errorHandler.handle(new NoStackTraceThrowable(message));
+    connection.shutdown();
   }
 
   /**
@@ -122,6 +124,7 @@ class SMTPInitialDialogue {
           ehloCmd();
         } else {
           errorHandler.handle(ar.cause());
+          connection.shutdown();
         }
       });
     });
@@ -129,6 +132,7 @@ class SMTPInitialDialogue {
 
   private void finished() {
     if (connection.isSsl() || config.getStarttls() != StartTLSOptions.REQUIRED) {
+      connection.cleanHandlers();
       finishedHandler.handle(null);
     } else {
       log.warn("STARTTLS required but not supported by server");
