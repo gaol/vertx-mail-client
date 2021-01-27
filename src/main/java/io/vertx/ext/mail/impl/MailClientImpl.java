@@ -17,6 +17,7 @@
 package io.vertx.ext.mail.impl;
 
 import io.vertx.core.*;
+import io.vertx.core.impl.ContextInternal;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.shareddata.LocalMap;
@@ -32,6 +33,7 @@ import io.vertx.ext.mail.mailencoder.MailEncoder;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
@@ -51,7 +53,7 @@ public class MailClientImpl implements MailClient {
   private final MailHolder holder;
   // hostname will cache getOwnhostname/getHostname result, we have to resolve only once
   // this cannot be done in the constructor since it is async, so its not final
-  private String hostname = null;
+  private volatile String hostname = null;
 
   private volatile boolean closed = false;
 
@@ -115,7 +117,7 @@ public class MailClientImpl implements MailClient {
   }
 
   private void getConnection(MailMessage message, Handler<AsyncResult<MailResult>> resultHandler, Context context) {
-    connectionPool.getConnection(hostname, result -> {
+    connectionPool.getConnection(hostname, context, result -> {
       if (result.succeeded()) {
         final SMTPConnection connection = result.result();
         connection.setErrorHandler(th -> handleError(th, resultHandler, context));
@@ -139,14 +141,18 @@ public class MailClientImpl implements MailClient {
 
   private void sendMessage(MailMessage email, SMTPConnection conn, Handler<AsyncResult<MailResult>> resultHandler,
       Context context) {
-    final Handler<AsyncResult<MailResult>> sentResultHandler = result -> {
-      if (result.succeeded()) {
-        conn.returnToPool();
-      } else {
-        conn.setBroken();
-      }
-      returnResult(result, resultHandler, context);
-    };
+    Promise<MailResult> sentResultPromise = Promise.promise();
+    AtomicReference<AsyncResult<MailResult>> mailResult = new AtomicReference<>();
+    sentResultPromise.future().flatMap(mr -> {
+        mailResult.set(Future.succeededFuture(mr));
+        return conn.returnToPool();
+      }).onComplete(result -> {
+        if (result.succeeded()) {
+          returnResult(mailResult.get(), resultHandler, context);
+        } else {
+          returnResult(Future.failedFuture(result.cause()), resultHandler, context);
+        }
+    });
     try {
       final MailEncoder encoder = new MailEncoder(email, hostname, config);
       final EncodedPart encodedPart = encoder.encodeMail();
@@ -154,19 +160,19 @@ public class MailClientImpl implements MailClient {
 
       final SMTPSendMail sendMail = new SMTPSendMail(conn, email, config, encodedPart, messageId);
       if (dkimSigners.isEmpty()) {
-        sendMail.startMailTransaction(sentResultHandler);
+        sendMail.startMailTransaction(sentResultPromise);
       } else {
         // generate the DKIM header before start
         dkimFuture(context, encodedPart).onComplete(dkim -> context.runOnContext(h -> {
           if (dkim.succeeded()) {
-            sendMail.startMailTransaction(sentResultHandler);
+            sendMail.startMailTransaction(sentResultPromise);
           } else {
-            sentResultHandler.handle(Future.failedFuture(dkim.cause()));
+            sentResultPromise.handle(Future.failedFuture(dkim.cause()));
           }
         }));
       }
     } catch (Exception e) {
-      handleError(e, sentResultHandler, context);
+      handleError(e, sentResultPromise, context);
     }
   }
 
