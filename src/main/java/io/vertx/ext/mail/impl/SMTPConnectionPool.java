@@ -35,7 +35,6 @@ import io.vertx.core.net.impl.clientconnection.Lease;
 import io.vertx.core.net.impl.pool.ConnectionEventListener;
 import io.vertx.core.net.impl.pool.ConnectionPool;
 import io.vertx.core.net.impl.pool.Connector;
-import io.vertx.core.net.impl.pool.SimpleConnectionPool;
 import io.vertx.ext.auth.PRNG;
 import io.vertx.ext.mail.MailConfig;
 import io.vertx.ext.mail.StartTLSOptions;
@@ -93,7 +92,13 @@ class SMTPConnectionPool extends Endpoint<Lease<SMTPConnection>> implements Conn
 
   @Override
   public void requestConnection(ContextInternal ctx, Handler<AsyncResult<Lease<SMTPConnection>>> handler) {
-    pool.acquire((EventLoopContext) ctx, 1, handler);
+    EventLoopContext eventLoopContext;
+    if (ctx instanceof EventLoopContext) {
+      eventLoopContext = (EventLoopContext)ctx;
+    } else {
+      eventLoopContext = ctx.owner().createEventLoopContext();
+    }
+    pool.acquire(eventLoopContext, 1, handler);
   }
 
   @Override
