@@ -73,7 +73,7 @@ class SMTPConnectionPool extends Endpoint<Lease<SMTPConnection>> implements Conn
 
     netClient = vertx.createNetClient(config);
     int maxSockets = config.getMaxPoolSize();
-    this.pool = new SimpleConnectionPool<>(this, maxSockets, maxSockets, -1);
+    this.pool = ConnectionPool.pool(this, maxSockets, maxSockets, -1);
   }
 
   @Override
@@ -155,34 +155,33 @@ class SMTPConnectionPool extends Endpoint<Lease<SMTPConnection>> implements Conn
     } else {
       closed = true;
       this.prng.close();
-      List<Future> conns = pool.close().stream()
-        .filter(f -> {
-          if (f.succeeded()) {
-            return f.result().isAvailable();
-          }
-          return true;
-        })
-        .map(f -> {
-          Promise<SMTPConnection> closePromise = Promise.promise();
-          f.result().close(closePromise);
-          return closePromise.future();
-        })
-        .collect(Collectors.toList());
-      CompositeFuture future = CompositeFuture.all(conns);
-      future.onComplete(h -> {
-        if (h.succeeded()) {
-          log.debug("Close the NetClient");
-          if (finishedHandler != null) {
-            this.netClient.close(finishedHandler);
+      Promise<List<Future<SMTPConnection>>> closePromise = Promise.promise();
+      closePromise.future()
+        .map(list -> list.stream()
+          .filter(connFuture -> connFuture.succeeded() && connFuture.result().isAvailable())
+          .map(connFuture -> {
+            Promise<SMTPConnection> promise = Promise.promise();
+            connFuture.result().close(promise);
+            return promise.future();
+          }).map(conn -> (Future)Future.succeededFuture())
+          .collect(Collectors.toList()))
+        .flatMap(CompositeFuture::join)
+        .onComplete(r -> {
+          if (r.succeeded()) {
+            log.debug("Close the NetClient");
+            if (finishedHandler != null) {
+              this.netClient.close(finishedHandler);
+            } else {
+              this.netClient.close();
+            }
           } else {
             this.netClient.close();
+            if (finishedHandler != null) {
+              finishedHandler.handle(Future.failedFuture(r.cause()));
+            }
           }
-        } else {
-          if (finishedHandler != null) {
-            finishedHandler.handle(Future.failedFuture(h.cause()));
-          }
-        }
-      });
+        });
+      pool.close(closePromise);
     }
   }
 
