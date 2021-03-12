@@ -54,9 +54,22 @@ class SMTPConnection {
   private Capabilities capa = new Capabilities();
   private ContextInternal context;
 
+  private long expirationTimestamp;
+
   SMTPConnection(MailConfig config, NetSocket ns) {
     this.config = config;
     this.ns = ns;
+    this.expirationTimestamp = expirationTimestampOf(config.getKeepAliveTimeout());
+  }
+
+  /**
+   * Compute the expiration timeout of the connection, relative to the current time.
+   *
+   * @param timeout the timeout
+   * @return the expiration timestamp
+   */
+  private static long expirationTimestampOf(long timeout) {
+    return timeout == 0 ? 0L : System.currentTimeMillis() + timeout * 1000;
   }
 
   SMTPConnection setEvictionHandler(Handler<Void> evictionHandler) {
@@ -114,7 +127,7 @@ class SMTPConnection {
   }
 
   boolean isValid() {
-    return !socketClosed && !shutdown;
+    return expirationTimestamp == 0 || System.currentTimeMillis() <= expirationTimestamp;
   }
 
   void handleNSClosed(Void v) {
@@ -272,6 +285,7 @@ class SMTPConnection {
         log.debug("recycle for next use");
         cleanHandlers();
         lease.recycle();
+        expirationTimestamp = expirationTimestampOf(config.getKeepAliveTimeout());
         promise.complete(this);
       } else {
         quitCloseConnection(promise);
@@ -294,6 +308,19 @@ class SMTPConnection {
       return promise.future();
     });
     writeLineWithDrainPromise("QUIT", true, closePromise);
+  }
+
+  void reset(Handler<AsyncResult<SMTPConnection>> handler) {
+    write("RSET", message -> {
+      cleanHandlers();
+      if (!StatusCode.isStatusOk(message)) {
+        handler.handle(Future.failedFuture(""));
+        shutdown();
+      } else {
+        expirationTimestamp = expirationTimestampOf(config.getKeepAliveTimeout());
+        handler.handle(Future.succeededFuture(this));
+      }
+    });
   }
 
   void setErrorHandler(Handler<Throwable> newHandler) {

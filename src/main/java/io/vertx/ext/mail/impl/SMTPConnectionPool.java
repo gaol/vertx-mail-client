@@ -55,11 +55,14 @@ class SMTPConnectionPool extends Endpoint<Lease<SMTPConnection>> implements Conn
   private final AuthOperationFactory authOperationFactory;
   private boolean closed = false;
 
+  private final Vertx vertx;
+  private long timerID = -1;
   private final ConnectionPool<SMTPConnection> pool;
 
   SMTPConnectionPool(Vertx vertx, MailConfig config) {
     super(() -> log.debug("Connection Pool disposed."));
     this.config = config;
+    this.vertx = vertx;
     this.prng = new PRNG(vertx);
     this.authOperationFactory = new AuthOperationFactory(prng);
 
@@ -74,6 +77,18 @@ class SMTPConnectionPool extends Endpoint<Lease<SMTPConnection>> implements Conn
     netClient = vertx.createNetClient(config);
     int maxSockets = config.getMaxPoolSize();
     this.pool = ConnectionPool.pool(this, maxSockets, maxSockets, -1);
+    if (config.getPoolCleanerPeriod() > 0 && config.isKeepAlive() && config.getKeepAliveTimeout() > 0) {
+      timerID = vertx.setTimer(config.getPoolCleanerPeriod(), this::checkExpired);
+    }
+  }
+
+  private void checkExpired(long timer) {
+    pool.evict(conn -> !conn.isValid(), ar -> {
+      timerID = vertx.setTimer(config.getPoolCleanerPeriod(), this::checkExpired);
+      if (ar.succeeded()) {
+        ar.result().forEach(conn -> conn.close(Promise.promise()));
+      }
+    });
   }
 
   @Override
@@ -120,8 +135,7 @@ class SMTPConnectionPool extends Endpoint<Lease<SMTPConnection>> implements Conn
         if (cr.succeeded()) {
           SMTPConnection conn = cr.result();
           if (conn.isInitialized()) {
-            // RSET for reused connections.
-            new SMTPReset(conn, resultHandler).start();
+            conn.reset(resultHandler);
           } else {
             SMTPStarter starter = new SMTPStarter(conn, this.config, hostname, authOperationFactory, resultHandler);
             try {
@@ -154,6 +168,10 @@ class SMTPConnectionPool extends Endpoint<Lease<SMTPConnection>> implements Conn
       throw new IllegalStateException("pool is already closed");
     } else {
       closed = true;
+      if (timerID >= 0) {
+        vertx.cancelTimer(timerID);
+        timerID = -1;
+      }
       this.prng.close();
       Promise<List<Future<SMTPConnection>>> closePromise = Promise.promise();
       closePromise.future()
