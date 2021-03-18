@@ -17,7 +17,6 @@
 package io.vertx.ext.mail.impl;
 
 import io.vertx.ext.mail.MailClient;
-import io.vertx.ext.mail.MailConfig;
 import io.vertx.ext.mail.MailMessage;
 import io.vertx.ext.mail.SMTPTestDummy;
 import io.vertx.ext.unit.TestContext;
@@ -67,9 +66,11 @@ public class MailAuthChainTest extends SMTPTestDummy {
       "250 2.1.5 Ok",
       "DATA",
       "354 End data with <CR><LF>.<CR><LF>",
-      "250 2.0.0 Ok: queued as ABCD"
-    ).setCloseImmediately(true);
-    final MailClient mailClient = mailClientLogin();
+      "250 2.0.0 Ok: queued as ABCD",
+      "QUIT",
+      "221 2.0.0 Bye"
+    );
+    final MailClient mailClient = MailClient.create(vertx, configLogin().setKeepAlive(false));
     final MailMessage email = exampleMessage();
     MailClientImpl clientImpl = (MailClientImpl)mailClient;
     assertNull(clientImpl.getConnectionPool().getAuthOperationFactory().getAuthMethod());
@@ -101,7 +102,7 @@ public class MailAuthChainTest extends SMTPTestDummy {
         "QUIT",
         "221 2.0.0 Bye"
       );
-      vertx.setTimer(100, h -> mailClient.sendMail(email, testContext.asyncAssertSuccess(r2 -> mailClient.close())));
+      mailClient.sendMail(email, testContext.asyncAssertSuccess(r2 -> mailClient.close()));
     }));
   }
 
@@ -131,8 +132,10 @@ public class MailAuthChainTest extends SMTPTestDummy {
       "eXl5",
       "435 4.7.8 Error: authentication failed: authentication failure",
       "AUTH PLAIN AHh4eAB5eXk=",
-      "435 4.7.8 Error: authentication failed: bad protocol / cancel"
-    ).setCloseImmediately(true);
+      "435 4.7.8 Error: authentication failed: bad protocol / cancel",
+      "QUIT",
+      "221 2.0.0 Bye"
+    );
     final MailClient mailClient = mailClientLogin();
     final MailMessage email = exampleMessage();
     MailClientImpl clientImpl = (MailClientImpl)mailClient;
@@ -184,9 +187,11 @@ public class MailAuthChainTest extends SMTPTestDummy {
       "250 2.1.5 Ok",
       "DATA",
       "354 End data with <CR><LF>.<CR><LF>",
-      "250 2.0.0 Ok: queued as ABCD"
-    ).setCloseImmediately(true);
-    final MailClient mailClient = mailClientLogin();
+      "250 2.0.0 Ok: queued as ABCD",
+      "QUIT",
+      "221 2.0.0 Bye"
+    );
+    final MailClient mailClient = MailClient.create(vertx, configLogin().setKeepAlive(false));
     final MailMessage email = exampleMessage();
     MailClientImpl clientImpl = (MailClientImpl)mailClient;
     // default is LOGIN, but will fail
@@ -216,7 +221,7 @@ public class MailAuthChainTest extends SMTPTestDummy {
         "QUIT",
         "221 2.0.0 Bye"
       );
-      vertx.setTimer(100, h -> mailClient.sendMail(email, testContext.asyncAssertSuccess(r2 -> mailClient.close())));
+      mailClient.sendMail(email, testContext.asyncAssertSuccess(r2 -> mailClient.close()));
     }));
   }
 

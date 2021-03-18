@@ -47,6 +47,7 @@ public class ConnectionErrorPoolTest extends SMTPTestDummy {
       testContext.assertTrue(result.failed());
       mailClient.sendMail(exampleMessage(), result2 -> {
         testContext.assertTrue(result2.failed());
+        mailClient.close();
         async.complete();
       });
     });
@@ -77,6 +78,7 @@ public class ConnectionErrorPoolTest extends SMTPTestDummy {
         System.out.println("2nd time done");
         testContext.assertTrue(result2.failed());
         testContext.assertTrue(pool.connCount()>=0, "connCount() is " + pool.connCount());
+        mailClient.close();
         async.complete();
       });
     });
