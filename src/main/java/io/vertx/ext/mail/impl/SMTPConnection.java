@@ -47,9 +47,13 @@ class SMTPConnection {
   private boolean evicted;
   private boolean socketClosed;
   private boolean shutdown;
+  private boolean closing;
+  private boolean inuse;
+  private boolean quitSent;
 
   private Handler<String> commandReplyHandler;
   private Handler<Throwable> errorHandler;
+  private Handler<AsyncResult<Void>> closeHandler;
 
   private Capabilities capa = new Capabilities();
   private ContextInternal context;
@@ -96,13 +100,15 @@ class SMTPConnection {
       throw new IllegalStateException("SMTPConnection has been initialized.");
     }
     this.nsHandler = new MultilineParser(buffer -> {
-      if (commandReplyHandler == null) {
+      if (commandReplyHandler == null && !quitSent) {
         handleError(new IllegalStateException("dropping reply arriving after we stopped processing the buffer."));
       } else {
         // make sure we only call the handler once
         Handler<String> currentHandler = commandReplyHandler;
         commandReplyHandler = null;
-        currentHandler.handle(buffer.toString());
+        if (currentHandler != null) {
+          currentHandler.handle(buffer.toString());
+        }
       }
     });
     ns.exceptionHandler(this::handleNSException);
@@ -127,20 +133,27 @@ class SMTPConnection {
   }
 
   boolean isValid() {
-    return expirationTimestamp == 0 || System.currentTimeMillis() <= expirationTimestamp;
+    return !closing && expirationTimestamp == 0 || System.currentTimeMillis() <= expirationTimestamp;
   }
 
   void handleNSClosed(Void v) {
     log.debug("handleNSClosed() - socket has been closed");
     socketClosed = true;
-    if (!shutdown) {
+    if (!shutdown && !quitSent) {
       handleError(new IOException("socket was closed unexpected."));
       shutdown();
+    }
+    handleClosed();
+  }
+
+  private void handleClosed() {
+    if (closeHandler != null) {
+      closeHandler.handle(Future.succeededFuture());
+      closeHandler = null;
     }
     if (!evicted) {
       evicted = true;
       if (evictionHandler != null) {
-        log.debug("handleNSClosed() - connection got evicted by closed");
         evictionHandler.handle(null);
         cleanHandlers();
       }
@@ -166,19 +179,11 @@ class SMTPConnection {
 
   void shutdown() {
     shutdown = true;
-    log.debug("shutdown() - shutdown and remove the connection from pool");
     if (!socketClosed) {
       socketClosed = true;
       ns.close();
     }
-    if (!evicted) {
-      evicted = true;
-      if (evictionHandler != null) {
-        log.debug("shutdown() - connection got evicted on shutdown");
-        evictionHandler.handle(null);
-        cleanHandlers();
-      }
-    }
+    handleClosed();
   }
 
   void cleanHandlers() {
@@ -278,17 +283,24 @@ class SMTPConnection {
   }
 
   Future<SMTPConnection> returnToPool() {
+    log.debug("return to pool");
     Promise<SMTPConnection> promise = context.promise();
     try {
-      if (config.isKeepAlive()) {
+      if (config.isKeepAlive() && !closing) {
         // recycle
         log.debug("recycle for next use");
         cleanHandlers();
         lease.recycle();
+        inuse = false;
         expirationTimestamp = expirationTimestampOf(config.getKeepAliveTimeout());
         promise.complete(this);
       } else {
-        quitCloseConnection(promise);
+        Promise<Void> p = Promise.promise();
+        p.future().onComplete(conn -> {
+          handleClosed();
+          promise.complete(this);
+        });
+        quitCloseConnection(p);
       }
     } catch (Exception e) {
       promise.fail(e);
@@ -300,38 +312,32 @@ class SMTPConnection {
    * send QUIT and close the connection, this operation waits for the success of the quit command but will close the
    * connection on exception as well
    */
-  private void quitCloseConnection(Promise<SMTPConnection> promise) {
-    Promise<Void> closePromise = Promise.promise();
-    closePromise.future().flatMap(v -> {
-      shutdown();
-      promise.complete(SMTPConnection.this);
-      return promise.future();
-    });
-    writeLineWithDrainPromise("QUIT", true, closePromise);
-  }
-
-  void reset(Handler<AsyncResult<SMTPConnection>> handler) {
-    write("RSET", message -> {
-      cleanHandlers();
-      if (!StatusCode.isStatusOk(message)) {
-        handler.handle(Future.failedFuture(""));
-        shutdown();
-      } else {
-        expirationTimestamp = expirationTimestampOf(config.getKeepAliveTimeout());
-        handler.handle(Future.succeededFuture(this));
-      }
-    });
+  void quitCloseConnection(Promise<Void> promise) {
+    quitSent = true;
+    inuse = false;
+    log.debug("send QUIT to close");
+    writeLineWithDrainPromise("QUIT", false, promise);
   }
 
   void setErrorHandler(Handler<Throwable> newHandler) {
     errorHandler = newHandler;
   }
 
+  void setInUse() {
+    inuse = true;
+    expirationTimestamp = expirationTimestampOf(config.getKeepAliveTimeout());
+  }
+
   /**
    * close the connection doing a QUIT command first
    */
-  public void close(Promise<SMTPConnection> promise) {
-    quitCloseConnection(promise);
+  void close(Promise<Void> promise) {
+    closing = true;
+    this.closeHandler = promise;
+    if (!inuse) {
+      log.debug("close by sending quit in close()");
+      quitCloseConnection(Promise.promise());
+    }
   }
 
   /**

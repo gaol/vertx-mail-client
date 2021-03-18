@@ -40,126 +40,85 @@ import io.vertx.ext.mail.MailConfig;
 import io.vertx.ext.mail.StartTLSOptions;
 import io.vertx.ext.mail.impl.sasl.AuthOperationFactory;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
 
-class SMTPConnectionPool extends Endpoint<Lease<SMTPConnection>> implements Connector<SMTPConnection> {
+class SMTPConnectionPool {
 
   private static final Logger log = LoggerFactory.getLogger(SMTPConnectionPool.class);
 
-  private final NetClient netClient;
-  private final MailConfig config;
   private final PRNG prng;
   private final AuthOperationFactory authOperationFactory;
   private boolean closed = false;
 
   private final Vertx vertx;
-  private long timerID = -1;
-  private final ConnectionPool<SMTPConnection> pool;
+  private final NetClient netClient;
+  private final MailConfig config;
+  private SMTPEndPoint endPoint;
 
   SMTPConnectionPool(Vertx vertx, MailConfig config) {
-    super(() -> log.debug("Connection Pool disposed."));
-    this.config = config;
     this.vertx = vertx;
-    this.prng = new PRNG(vertx);
-    this.authOperationFactory = new AuthOperationFactory(prng);
-
+    this.config = config;
     // If the hostname verification isn't set yet, but we are configured to use SSL, update that now
     String verification = config.getHostnameVerificationAlgorithm();
     if ((verification == null || verification.isEmpty()) && !config.isTrustAll() &&
-        (config.isSsl() || config.getStarttls() != StartTLSOptions.DISABLED)) {
+      (config.isSsl() || config.getStarttls() != StartTLSOptions.DISABLED)) {
       // we can use HTTPS verification, which matches the requirements for SMTPS
       config.setHostnameVerificationAlgorithm("HTTPS");
     }
-
     netClient = vertx.createNetClient(config);
-    int maxSockets = config.getMaxPoolSize();
-    this.pool = ConnectionPool.pool(this, maxSockets, maxSockets, -1);
-    if (config.getPoolCleanerPeriod() > 0 && config.isKeepAlive() && config.getKeepAliveTimeout() > 0) {
-      timerID = vertx.setTimer(config.getPoolCleanerPeriod(), this::checkExpired);
-    }
+    endPoint = new SMTPEndPoint(vertx, netClient, config, this::dispose);
+    this.prng = new PRNG(vertx);
+    this.authOperationFactory = new AuthOperationFactory(prng);
   }
 
-  private void checkExpired(long timer) {
-    pool.evict(conn -> !conn.isValid(), ar -> {
-      timerID = vertx.setTimer(config.getPoolCleanerPeriod(), this::checkExpired);
-      if (ar.succeeded()) {
-        ar.result().forEach(conn -> conn.close(Promise.promise()));
-      }
-    });
-  }
-
-  @Override
-  public void requestConnection(ContextInternal ctx, Handler<AsyncResult<Lease<SMTPConnection>>> handler) {
-    EventLoopContext eventLoopContext;
-    if (ctx instanceof EventLoopContext) {
-      eventLoopContext = (EventLoopContext)ctx;
-    } else {
-      eventLoopContext = ctx.owner().createEventLoopContext();
-    }
-    pool.acquire(eventLoopContext, 1, handler);
-  }
-
-  @Override
-  public void connect(EventLoopContext context, ConnectionEventListener listener, Handler<AsyncResult<ConnectResult<SMTPConnection>>> handler) {
-    netClient.connect(config.getPort(), config.getHostname()).onComplete(ar -> {
-      if (ar.succeeded()) {
-        incRefCount();
-        NetSocket socket = ar.result();
-        SMTPConnection connection = new SMTPConnection(config, socket)
-          .setContext(context)
-          .setEvictionHandler(v -> {
-            decRefCount();
-            listener.remove();
-          });
-        handler.handle(Future.succeededFuture(new ConnectResult<>(connection, 1, 1)));
-      } else {
-        handler.handle(Future.failedFuture(ar.cause()));
-      }
-    });
-  }
-
-  @Override
-  public boolean isValid(SMTPConnection connection) {
-    return connection.isValid();
+  void dispose() {
+    log.debug("SMTPEndPoint gets disposed.");
   }
 
   AuthOperationFactory getAuthOperationFactory() {
     return authOperationFactory;
   }
 
-  void getConnection(String hostname, Context ctx, Handler<AsyncResult<SMTPConnection>> resultHandler) {
+  synchronized void getConnection(String hostname, Context ctx, Handler<AsyncResult<SMTPConnection>> resultHandler) {
     log.debug("getConnection()");
     if (closed) {
       resultHandler.handle(Future.failedFuture("connection pool is closed"));
     } else {
       ContextInternal ctxInternal = (ContextInternal)ctx;
-      Promise<Lease<SMTPConnection>> promise = ctx == null ? Promise.promise() : ctxInternal.promise();
+      Promise<Lease<SMTPConnection>> promise = ctxInternal.promise();
       promise.future().map(l -> l.get().setLease(l)).onComplete(cr -> {
         if (cr.succeeded()) {
           SMTPConnection conn = cr.result();
+          Promise<SMTPConnection> connInitial = Promise.promise();
+          connInitial.future().onFailure(err -> conn.shutdown()).onComplete(resultHandler);
+          conn.setInUse();
           if (conn.isInitialized()) {
-            conn.reset(resultHandler);
+            new SMTPReset(conn, connInitial).start();
           } else {
-            SMTPStarter starter = new SMTPStarter(conn, this.config, hostname, authOperationFactory, resultHandler);
+            SMTPStarter starter = new SMTPStarter(conn, this.config, hostname, authOperationFactory, connInitial);
             try {
               conn.init(starter::serverGreeting);
             } catch (Exception e) {
-              resultHandler.handle(Future.failedFuture(e));
+              connInitial.handle(Future.failedFuture(e));
             }
           }
         } else {
           resultHandler.handle(Future.failedFuture(cr.cause()));
         }
       });
-      requestConnection(ctxInternal, promise);
+      if (!endPoint.getConnection(ctxInternal, promise)) {
+        log.debug("EndPoint was disposed, create a new one");
+        endPoint = new SMTPEndPoint(vertx, netClient, config, this::dispose);
+        getConnection(hostname, ctx, resultHandler);
+      }
     }
   }
 
   public void close() {
     close(h -> {
-      super.close();
       if (h.failed()) {
         log.warn("Failed to close the pool", h.cause());
       }
@@ -173,25 +132,23 @@ class SMTPConnectionPool extends Endpoint<Lease<SMTPConnection>> implements Conn
       throw new IllegalStateException("pool is already closed");
     } else {
       closed = true;
-      if (timerID >= 0) {
-        vertx.cancelTimer(timerID);
-        timerID = -1;
-      }
       this.prng.close();
       Promise<List<Future<SMTPConnection>>> closePromise = Promise.promise();
       closePromise.future()
-        .map(list -> list.stream()
-          .filter(connFuture -> connFuture.succeeded() && connFuture.result().isAvailable())
-          .map(connFuture -> {
-            Promise<SMTPConnection> promise = Promise.promise();
-            connFuture.result().close(promise);
-            return promise.future();
-          }).map(conn -> (Future)Future.succeededFuture())
-          .collect(Collectors.toList()))
-        .flatMap(CompositeFuture::join)
+        .flatMap(list -> {
+          List<Future> futures = list.stream()
+            .filter(connFuture -> connFuture.succeeded() && connFuture.result().isAvailable())
+            .map(connFuture -> {
+              Promise<Void> promise = Promise.promise();
+              connFuture.result().close(promise);
+              return promise.future();
+            })
+            .collect(Collectors.toList());
+          return CompositeFuture.all(futures);
+        })
         .onComplete(r -> {
+          log.debug("Close net client");
           if (r.succeeded()) {
-            log.debug("Close the NetClient");
             if (finishedHandler != null) {
               this.netClient.close(finishedHandler);
             } else {
@@ -204,12 +161,12 @@ class SMTPConnectionPool extends Endpoint<Lease<SMTPConnection>> implements Conn
             }
           }
         });
-      pool.close(closePromise);
+      endPoint.close(closePromise);
     }
   }
 
   int connCount() {
-    return pool.size();
+    return endPoint.size();
   }
 
   NetClient getNetClient() {

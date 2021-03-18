@@ -17,7 +17,6 @@
 package io.vertx.ext.mail.impl;
 
 import io.vertx.core.*;
-import io.vertx.core.impl.ContextInternal;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.shareddata.LocalMap;
@@ -117,7 +116,7 @@ public class MailClientImpl implements MailClient {
   }
 
   private void getConnection(MailMessage message, Handler<AsyncResult<MailResult>> resultHandler, Context context) {
-    connectionPool.getConnection(hostname, context, result -> {
+    context.runOnContext(v -> connectionPool.getConnection(hostname, context, result -> {
       if (result.succeeded()) {
         final SMTPConnection connection = result.result();
         connection.setErrorHandler(th -> handleError(th, resultHandler, context));
@@ -125,7 +124,7 @@ public class MailClientImpl implements MailClient {
       } else {
         handleError(result.cause(), resultHandler, context);
       }
-    });
+    }));
   }
 
   private Future<Void> dkimFuture(Context context, EncodedPart encodedPart) {
@@ -150,7 +149,9 @@ public class MailClientImpl implements MailClient {
         if (result.succeeded()) {
           returnResult(mailResult.get(), resultHandler, context);
         } else {
-          returnResult(Future.failedFuture(result.cause()), resultHandler, context);
+          Promise<Void> promise = Promise.promise();
+          promise.future().onComplete(v -> returnResult(Future.failedFuture(result.cause()), resultHandler, context));
+          conn.quitCloseConnection(promise);
         }
     });
     try {

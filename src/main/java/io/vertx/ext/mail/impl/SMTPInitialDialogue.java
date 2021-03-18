@@ -17,6 +17,7 @@
 package io.vertx.ext.mail.impl;
 
 import io.vertx.core.Handler;
+import io.vertx.core.Promise;
 import io.vertx.core.impl.NoStackTraceThrowable;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
@@ -106,7 +107,6 @@ class SMTPInitialDialogue {
     connection.cleanHandlers();
     log.debug("handleError:" + message);
     errorHandler.handle(new NoStackTraceThrowable(message));
-    connection.shutdown();
   }
 
   /**
@@ -124,7 +124,6 @@ class SMTPInitialDialogue {
           ehloCmd();
         } else {
           errorHandler.handle(ar.cause());
-          connection.shutdown();
         }
       });
     });
