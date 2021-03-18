@@ -55,7 +55,13 @@ class SMTPEndPoint extends Endpoint<Lease<SMTPConnection>> implements Connector<
 
   @Override
   public void requestConnection(ContextInternal ctx, Handler<AsyncResult<Lease<SMTPConnection>>> handler) {
-    pool.acquire((EventLoopContext)ctx, 1, handler);
+    EventLoopContext eventLoopContext;
+    if (ctx instanceof EventLoopContext) {
+      eventLoopContext = (EventLoopContext)ctx;
+    } else {
+      eventLoopContext = ctx.owner().createEventLoopContext(ctx.nettyEventLoop(), ctx.workerPool(), ctx.classLoader());
+    }
+    pool.acquire(eventLoopContext, 1, handler);
   }
 
   @Override
