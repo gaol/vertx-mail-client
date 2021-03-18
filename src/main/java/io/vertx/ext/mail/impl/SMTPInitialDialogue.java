@@ -49,6 +49,7 @@ class SMTPInitialDialogue {
     this.hostname = hostname;
     this.finishedHandler = finishedHandler;
     this.errorHandler = errorHandler;
+    this.connection.setErrorHandler(errorHandler);
   }
 
   public void start(final String message) {
@@ -102,6 +103,7 @@ class SMTPInitialDialogue {
   }
 
   private void handleError(String message) {
+    connection.cleanHandlers();
     log.debug("handleError:" + message);
     errorHandler.handle(new NoStackTraceThrowable(message));
   }
@@ -120,7 +122,7 @@ class SMTPInitialDialogue {
           // on secure channel (e.g. googlemail)
           ehloCmd();
         } else {
-
+          errorHandler.handle(ar.cause());
         }
       });
     });
@@ -128,6 +130,7 @@ class SMTPInitialDialogue {
 
   private void finished() {
     if (connection.isSsl() || config.getStarttls() != StartTLSOptions.REQUIRED) {
+      connection.cleanHandlers();
       finishedHandler.handle(null);
     } else {
       log.warn("STARTTLS required but not supported by server");

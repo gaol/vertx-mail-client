@@ -51,7 +51,7 @@ public class MailClientImpl implements MailClient {
   private final MailHolder holder;
   // hostname will cache getOwnhostname/getHostname result, we have to resolve only once
   // this cannot be done in the constructor since it is async, so its not final
-  private String hostname = null;
+  private volatile String hostname = null;
 
   private volatile boolean closed = false;
 
@@ -115,7 +115,7 @@ public class MailClientImpl implements MailClient {
   }
 
   private void getConnection(MailMessage message, Handler<AsyncResult<MailResult>> resultHandler, Context context) {
-    connectionPool.getConnection(hostname, result -> {
+    context.runOnContext(v -> connectionPool.getConnection(hostname, context, result -> {
       if (result.succeeded()) {
         final SMTPConnection connection = result.result();
         connection.setErrorHandler(th -> handleError(th, resultHandler, context));
@@ -123,7 +123,7 @@ public class MailClientImpl implements MailClient {
       } else {
         handleError(result.cause(), resultHandler, context);
       }
-    });
+    }));
   }
 
   private Future<Void> dkimFuture(Context context, EncodedPart encodedPart) {
@@ -138,15 +138,17 @@ public class MailClientImpl implements MailClient {
   }
 
   private void sendMessage(MailMessage email, SMTPConnection conn, Handler<AsyncResult<MailResult>> resultHandler,
-      Context context) {
-    final Handler<AsyncResult<MailResult>> sentResultHandler = result -> {
-      if (result.succeeded()) {
-        conn.returnToPool();
+                           Context context) {
+    Promise<MailResult> sentResultHandler = Promise.promise();
+    sentResultHandler.future().onComplete(mr -> {
+      if (mr.succeeded()) {
+        conn.returnToPool().onComplete(cn -> returnResult(mr, resultHandler, context));
       } else {
-        conn.setBroken();
+        Promise<Void> promise = Promise.promise();
+        promise.future().onComplete(v -> returnResult(Future.failedFuture(mr.cause()), resultHandler, context));
+        conn.quitCloseConnection(promise);
       }
-      returnResult(result, resultHandler, context);
-    };
+    });
     try {
       final MailEncoder encoder = new MailEncoder(email, hostname, config);
       final EncodedPart encodedPart = encoder.encodeMail();
