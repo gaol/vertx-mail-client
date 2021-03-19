@@ -58,10 +58,21 @@ class SMTPConnection {
 
   private Capabilities capa = new Capabilities();
   private ContextInternal context;
+  private long expirationTimestamp;
 
   SMTPConnection(MailConfig config, NetSocket ns) {
     this.config = config;
     this.ns = ns;
+  }
+
+  /**
+   * Compute the expiration timeout of the connection, relative to the current time.
+   *
+   * @param timeout the timeout
+   * @return the expiration timestamp
+   */
+  private static long expirationTimestampOf(long timeout) {
+    return timeout == 0 ? 0L : System.currentTimeMillis() + timeout * 1000;
   }
 
   SMTPConnection setEvictionHandler(Handler<Void> evictionHandler) {
@@ -102,6 +113,7 @@ class SMTPConnection {
     ns.exceptionHandler(this::handleNSException);
     ns.closeHandler(this::handleNSClosed);
     commandReplyHandler = initialReplyHandler;
+    this.expirationTimestamp = expirationTimestampOf(config.getKeepAliveTimeout());
     ns.handler(this.nsHandler);
   }
 
@@ -121,7 +133,7 @@ class SMTPConnection {
   }
 
   boolean isValid() {
-    return !closing;
+    return !closing && expirationTimestamp == 0 || System.currentTimeMillis() <= expirationTimestamp;
   }
 
   void handleNSClosed(Void v) {
@@ -285,6 +297,7 @@ class SMTPConnection {
         cleanHandlers();
         lease.recycle();
         inuse = false;
+        expirationTimestamp = expirationTimestampOf(config.getKeepAliveTimeout());
         promise.complete(this);
       } else {
         Promise<Void> p = Promise.promise();
@@ -331,6 +344,7 @@ class SMTPConnection {
 
   void setInUse() {
     inuse = true;
+    expirationTimestamp = expirationTimestampOf(config.getKeepAliveTimeout());
   }
 
   /**
