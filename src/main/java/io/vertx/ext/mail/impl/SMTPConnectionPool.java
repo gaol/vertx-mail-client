@@ -40,6 +40,9 @@ class SMTPConnectionPool {
 
   private static final Logger log = LoggerFactory.getLogger(SMTPConnectionPool.class);
 
+  // max retry times if RSET failed when choosing an existed connection in pool, default to 5.
+  private static final int RSET_MAX_RETRY = Integer.getInteger("vertx.mail.rset.max.retry", 5);
+
   private final PRNG prng;
   private final AuthOperationFactory authOperationFactory;
   private boolean closed = false;
@@ -78,6 +81,10 @@ class SMTPConnectionPool {
   }
 
   synchronized void getConnection(String hostname, Context ctx, Handler<AsyncResult<SMTPConnection>> resultHandler) {
+    getConnection0(hostname, ctx, resultHandler, 0);
+  }
+
+  private void getConnection0(String hostname, Context ctx, Handler<AsyncResult<SMTPConnection>> resultHandler, final int i) {
     log.debug("getConnection()");
     if (closed) {
       resultHandler.handle(Future.failedFuture("connection pool is closed"));
@@ -87,12 +94,40 @@ class SMTPConnectionPool {
       promise.future().map(l -> l.get().setLease(l)).onComplete(cr -> {
         if (cr.succeeded()) {
           SMTPConnection conn = cr.result();
-          Promise<SMTPConnection> connInitial = Promise.promise();
-          connInitial.future().onFailure(err -> conn.shutdown()).onComplete(resultHandler);
           conn.setInUse();
           if (conn.isInitialized()) {
-            new SMTPReset(conn, connInitial).start();
+            Promise<SMTPConnection> connReset = Promise.promise();
+            connReset.future().onComplete(reset -> {
+              if (reset.succeeded()) {
+                resultHandler.handle(Future.succeededFuture(conn));
+              } else {
+                // close the conn by sending quit, and try to get another one
+                Promise<Void> closePromise = Promise.promise();
+                closePromise.future().onComplete(v -> {
+                  if (i < RSET_MAX_RETRY) {
+                    // close this one, and try get another connection
+                    log.debug("Failed on RSET, try " + (i + 1) + " time");
+                    getConnection0(hostname, ctx, resultHandler, i + 1);
+                  } else {
+                    // RSET failed more than 5 times, fail
+                    resultHandler.handle(Future.failedFuture(reset.cause()));
+                  }
+                });
+                conn.quitCloseConnection(closePromise);
+              }
+            });
+            new SMTPReset(conn, connReset).start();
           } else {
+            Promise<SMTPConnection> connInitial = Promise.promise();
+            connInitial.future().onComplete(v -> {
+              if (v.succeeded()) {
+                resultHandler.handle(Future.succeededFuture(conn));
+              } else {
+                Promise<Void> quitPromise = Promise.promise();
+                quitPromise.future().onComplete(vv -> resultHandler.handle(Future.failedFuture(v.cause())));
+                conn.quitCloseConnection(quitPromise);
+              }
+            });
             SMTPStarter starter = new SMTPStarter(conn, this.config, hostname, authOperationFactory, connInitial);
             try {
               conn.init(starter::serverGreeting);

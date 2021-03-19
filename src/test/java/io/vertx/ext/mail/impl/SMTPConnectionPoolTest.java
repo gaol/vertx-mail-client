@@ -272,7 +272,7 @@ public class SMTPConnectionPoolTest extends SMTPTestWiser {
   public final void testWaitingForConnection(TestContext testContext) {
     final MailConfig config = configNoSSL().setMaxPoolSize(1);
     Async async = testContext.async();
-    AtomicBoolean haveGotConnection = new AtomicBoolean(false);
+    AtomicBoolean connRecycled = new AtomicBoolean(false);
     SMTPConnectionPool pool = new SMTPConnectionPool(vertx, config);
     testContext.assertEquals(0, pool.connCount());
     pool.getConnection("hostname", result -> {
@@ -281,24 +281,24 @@ public class SMTPConnectionPoolTest extends SMTPTestWiser {
         testContext.assertEquals(1, pool.connCount());
         pool.getConnection("hostname", result2 -> {
           if (result.succeeded()) {
-            haveGotConnection.set(true);
+            testContext.assertTrue(connRecycled.get(), "didn't get a connection on the 2nd try");
             log.debug("got connection 2nd time");
             testContext.assertEquals(1, pool.connCount());
-            result2.result().returnToPool();
-            pool.close(v -> {
+            result2.result().returnToPool().onComplete(v -> pool.close(vv -> {
               testContext.assertEquals(0, pool.connCount());
               async.complete();
-            });
+            }));
           } else {
             log.info(result2.cause());
             testContext.fail(result2.cause());
           }
         });
-        testContext.assertFalse(haveGotConnection.get(), "got a connection on the 2nd try already");
+        testContext.assertFalse(connRecycled.get(), "got a connection on the 2nd try already");
         log.debug("didn't get a connection 2nd time yet");
-        result.result().returnToPool();
-        testContext.assertTrue(haveGotConnection.get(), "didn't get a connection on the 2nd try");
-        log.debug("got a connection 2nd time");
+        result.result().returnToPool().onComplete(v -> {
+          connRecycled.set(true);
+          log.debug("connection returned to the pool for next use");
+        });
       } else {
         log.info(result.cause());
         testContext.fail(result.cause());
