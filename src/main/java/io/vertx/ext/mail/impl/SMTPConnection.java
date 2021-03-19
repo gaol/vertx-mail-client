@@ -308,7 +308,13 @@ class SMTPConnection {
     quitSent = true;
     inuse = false;
     log.debug("send QUIT to close");
-    writeLineWithDrainPromise("QUIT", false, promise);
+    Promise<Void> closePromise = Promise.promise();
+    // make sure the connection is closed even after sending QUIT command
+    closePromise.future().onComplete(v -> context.runOnContext(vv -> {
+      shutdown();
+      promise.handle(v);
+    }));
+    writeLineWithDrainPromise("QUIT", false, closePromise);
   }
 
   private boolean checkClosed() {
