@@ -18,6 +18,7 @@ package io.vertx.ext.mail.impl;
 
 import io.vertx.core.*;
 import io.vertx.core.impl.ContextInternal;
+import io.vertx.core.impl.NoStackTraceThrowable;
 import io.vertx.core.impl.logging.Logger;
 import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.core.net.NetSocket;
@@ -164,7 +165,7 @@ class SMTPConnection {
     capa.parseCapabilities(message);
   }
 
-  void shutdown() {
+  private void shutdown() {
     shutdown = true;
     if (!socketClosed) {
       socketClosed = true;
@@ -202,6 +203,7 @@ class SMTPConnection {
    */
   void write(String str, int blank, Handler<String> commandResultHandler) {
     this.commandReplyHandler = commandResultHandler;
+    checkClosed();
     if (log.isDebugEnabled()) {
       String logStr;
       if (blank >= 0) {
@@ -229,6 +231,10 @@ class SMTPConnection {
 
   // write single line not expecting a reply, using drain handler
   void writeLineWithDrainPromise(String str, boolean mayLog, Promise<Void> promise) {
+    if (checkClosed()) {
+      promise.fail("Connection was closed");
+      return;
+    }
     if (mayLog) {
       log.debug(str);
     }
@@ -305,6 +311,14 @@ class SMTPConnection {
     writeLineWithDrainPromise("QUIT", false, promise);
   }
 
+  private boolean checkClosed() {
+    if (isClosed() || shutdown) {
+      handleError(new NoStackTraceThrowable("Connection was closed."));
+      return true;
+    }
+    return false;
+  }
+
   void setErrorHandler(Handler<Throwable> newHandler) {
     errorHandler = newHandler;
   }
@@ -318,10 +332,11 @@ class SMTPConnection {
    */
   void close(Promise<Void> promise) {
     closing = true;
-    this.closeHandler = promise;
     if (!inuse) {
       log.debug("close by sending quit in close()");
-      quitCloseConnection(Promise.promise());
+      quitCloseConnection(promise);
+    } else {
+      this.closeHandler = promise;
     }
   }
 
