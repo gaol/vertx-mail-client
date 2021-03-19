@@ -62,6 +62,10 @@ class SMTPEndPoint extends Endpoint<Lease<SMTPConnection>> implements PoolConnec
     pool.acquire(eventLoopContext, 1, handler);
   }
 
+  synchronized void checkExpired(Handler<AsyncResult<List<SMTPConnection>>> handler) {
+    pool.evict(conn -> !conn.isValid(), handler);
+  }
+
   @Override
   public void connect(EventLoopContext context, PoolConnector.Listener listener, Handler<AsyncResult<ConnectResult<SMTPConnection>>> handler) {
     netClient.connect(config.getPort(), config.getHostname()).onComplete(ar -> {
