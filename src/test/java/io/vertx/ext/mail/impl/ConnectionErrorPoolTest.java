@@ -47,6 +47,7 @@ public class ConnectionErrorPoolTest extends SMTPTestDummy {
       testContext.assertTrue(result.failed());
       mailClient.sendMail(exampleMessage(), result2 -> {
         testContext.assertTrue(result2.failed());
+        mailClient.close();
         async.complete();
       });
     });
@@ -65,15 +66,16 @@ public class ConnectionErrorPoolTest extends SMTPTestDummy {
     MailClientImpl mailClient = (MailClientImpl) MailClient.create(vertx, defaultConfig().setMaxPoolSize(1));
     SMTPConnectionPool pool = mailClient.getConnectionPool();
 
-    testContext.assertTrue(pool.connCount()>=0, "connCount() is " + pool.connCount());
+    testContext.assertTrue(pool.connCount()==0, "connCount() is " + pool.connCount());
 
     mailClient.sendMail(exampleMessage(), result -> {
       testContext.assertTrue(result.failed());
-      testContext.assertTrue(pool.connCount()>=0, "connCount() is " + pool.connCount());
+      testContext.assertTrue(pool.connCount()==0, "connCount() is " + pool.connCount());
 
       mailClient.sendMail(exampleMessage(), result2 -> {
         testContext.assertTrue(result2.failed());
-        testContext.assertTrue(pool.connCount()>=0, "connCount() is " + pool.connCount());
+        testContext.assertTrue(pool.connCount()==0, "connCount() is " + pool.connCount());
+        mailClient.close();
         async.complete();
       });
     });
