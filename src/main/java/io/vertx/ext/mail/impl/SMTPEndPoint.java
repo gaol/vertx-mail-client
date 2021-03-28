@@ -19,7 +19,6 @@ import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Promise;
-import io.vertx.core.Vertx;
 import io.vertx.core.impl.ContextInternal;
 import io.vertx.core.impl.EventLoopContext;
 import io.vertx.core.net.NetClient;
@@ -27,9 +26,8 @@ import io.vertx.core.net.NetSocket;
 import io.vertx.core.net.impl.clientconnection.ConnectResult;
 import io.vertx.core.net.impl.clientconnection.Endpoint;
 import io.vertx.core.net.impl.clientconnection.Lease;
-import io.vertx.core.net.impl.pool.ConnectionEventListener;
 import io.vertx.core.net.impl.pool.ConnectionPool;
-import io.vertx.core.net.impl.pool.Connector;
+import io.vertx.core.net.impl.pool.PoolConnector;
 import io.vertx.ext.mail.MailConfig;
 
 import java.util.List;
@@ -40,12 +38,12 @@ import java.util.List;
  *
  * @author <a href="mailto: aoingl@gmail.com">Lin Gao</a>
  */
-class SMTPEndPoint extends Endpoint<Lease<SMTPConnection>> implements Connector<SMTPConnection> {
+class SMTPEndPoint extends Endpoint<Lease<SMTPConnection>> implements PoolConnector<SMTPConnection> {
   private final NetClient netClient;
   private final MailConfig config;
   private final ConnectionPool<SMTPConnection> pool;
 
-  SMTPEndPoint(Vertx vertx, NetClient netClient, MailConfig config, Runnable dispose) {
+  SMTPEndPoint(NetClient netClient, MailConfig config, Runnable dispose) {
     super(dispose);
     this.config = config;
     this.netClient = netClient;
@@ -54,7 +52,7 @@ class SMTPEndPoint extends Endpoint<Lease<SMTPConnection>> implements Connector<
   }
 
   @Override
-  public void requestConnection(ContextInternal ctx, Handler<AsyncResult<Lease<SMTPConnection>>> handler) {
+  public void requestConnection(ContextInternal ctx, long timeout, Handler<AsyncResult<Lease<SMTPConnection>>> handler) {
     EventLoopContext eventLoopContext;
     if (ctx instanceof EventLoopContext) {
       eventLoopContext = (EventLoopContext)ctx;
@@ -65,7 +63,7 @@ class SMTPEndPoint extends Endpoint<Lease<SMTPConnection>> implements Connector<
   }
 
   @Override
-  public void connect(EventLoopContext context, ConnectionEventListener listener, Handler<AsyncResult<ConnectResult<SMTPConnection>>> handler) {
+  public void connect(EventLoopContext context, PoolConnector.Listener listener, Handler<AsyncResult<ConnectResult<SMTPConnection>>> handler) {
     netClient.connect(config.getPort(), config.getHostname()).onComplete(ar -> {
       if (ar.succeeded()) {
         incRefCount();
@@ -74,7 +72,7 @@ class SMTPEndPoint extends Endpoint<Lease<SMTPConnection>> implements Connector<
           .setContext(context)
           .setEvictionHandler(v -> {
             decRefCount();
-            listener.remove();
+            listener.onRemove();
           });
         handler.handle(Future.succeededFuture(new ConnectResult<>(connection, 1, 1)));
       } else {
