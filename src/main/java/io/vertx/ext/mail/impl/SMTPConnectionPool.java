@@ -63,7 +63,7 @@ class SMTPConnectionPool {
       config.setHostnameVerificationAlgorithm("HTTPS");
     }
     netClient = vertx.createNetClient(config);
-    endPoint = new SMTPEndPoint(vertx, netClient, config, this::dispose);
+    endPoint = new SMTPEndPoint(netClient, config, this::dispose);
     this.prng = new PRNG(vertx);
     this.authOperationFactory = new AuthOperationFactory(prng);
   }
@@ -139,9 +139,9 @@ class SMTPConnectionPool {
           resultHandler.handle(Future.failedFuture(cr.cause()));
         }
       });
-      if (!endPoint.getConnection(ctxInternal, promise)) {
+      if (!endPoint.getConnection(ctxInternal, config.getConnectTimeout(), promise)) {
         log.debug("EndPoint was disposed, create a new one");
-        endPoint = new SMTPEndPoint(vertx, netClient, config, this::dispose);
+        endPoint = new SMTPEndPoint(netClient, config, this::dispose);
         getConnection(hostname, ctx, resultHandler);
       }
     }
