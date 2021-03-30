@@ -75,9 +75,13 @@ class SMTPConnectionPool {
 
   private void checkExpired(long timer) {
     endPoint.checkExpired(ar -> {
-      timerID = vertx.setTimer(config.getPoolCleanerPeriod(), this::checkExpired);
       if (ar.succeeded()) {
-        ar.result().forEach(conn -> conn.quitCloseConnection(Promise.promise()));
+        CompositeFuture.all(ar.result().stream().map(conn -> {
+          Promise<Void> promise = Promise.promise();
+          conn.close(promise);
+          return promise.future();
+        }).collect(Collectors.toList()))
+          .onComplete(v -> timerID = vertx.setTimer(config.getPoolCleanerPeriod(), this::checkExpired));
       }
     });
   }
