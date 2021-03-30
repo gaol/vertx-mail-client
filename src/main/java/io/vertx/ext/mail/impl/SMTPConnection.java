@@ -144,6 +144,7 @@ class SMTPConnection {
     log.debug("handleNSClosed() - socket has been closed");
     socketClosed = true;
     if (!shutdown && !quitSent) {
+      log.debug("un expected connection: inuse: " + inuse + ", quitSent: " + quitSent + ", evicted: " + evicted + ", closing: " + closing + ", isvalid: " + isValid());
       handleError(new IOException("socket was closed unexpected."));
       shutdown();
     }
@@ -158,6 +159,7 @@ class SMTPConnection {
     if (!evicted) {
       evicted = true;
       if (evictionHandler != null) {
+        log.debug("evited from connection pool :::::::::::::, "  + inuse + ", quitSent: " + quitSent + ", evicted: " + evicted + ", closing: " + closing + ", isvalid: " + isValid());
         evictionHandler.handle(null);
         cleanHandlers();
       }

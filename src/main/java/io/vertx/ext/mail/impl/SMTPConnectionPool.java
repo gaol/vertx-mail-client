@@ -76,6 +76,10 @@ class SMTPConnectionPool {
   private void checkExpired(long timer) {
     endPoint.checkExpired(ar -> {
       if (ar.succeeded()) {
+        List<SMTPConnection> conns = ar.result();
+        if (conns.size() > 0) {
+          log.debug("number of connections to be closed: " + conns.size() + ", number of connections in pool: " + connCount());
+        }
         CompositeFuture.all(ar.result().stream().map(conn -> {
           Promise<Void> promise = Promise.promise();
           conn.close(promise);
