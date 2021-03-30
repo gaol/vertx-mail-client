@@ -33,6 +33,7 @@ import io.vertx.ext.mail.MailConfig;
 import io.vertx.ext.mail.StartTLSOptions;
 import io.vertx.ext.mail.impl.sasl.AuthOperationFactory;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -136,9 +137,15 @@ class SMTPConnectionPool {
               if (v.succeeded()) {
                 resultHandler.handle(Future.succeededFuture(conn));
               } else {
-                Promise<Void> quitPromise = Promise.promise();
-                quitPromise.future().onComplete(vv -> resultHandler.handle(Future.failedFuture(v.cause())));
-                conn.quitCloseConnection(quitPromise);
+                Throwable cause = v.cause();
+                if (cause instanceof IOException) {
+                  conn.shutdown();
+                  resultHandler.handle(Future.failedFuture(cause));
+                } else {
+                  Promise<Void> quitPromise = Promise.promise();
+                  quitPromise.future().onComplete(vv -> resultHandler.handle(Future.failedFuture(v.cause())));
+                  conn.quitCloseConnection(quitPromise);
+                }
               }
             });
             SMTPStarter starter = new SMTPStarter(conn, this.config, hostname, authOperationFactory, connInitial);
