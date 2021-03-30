@@ -16,7 +16,11 @@
 
 package io.vertx.ext.mail.impl;
 
-import io.vertx.core.*;
+import io.vertx.core.AsyncResult;
+import io.vertx.core.Context;
+import io.vertx.core.Future;
+import io.vertx.core.Handler;
+import io.vertx.core.Promise;
 import io.vertx.core.impl.ContextInternal;
 import io.vertx.core.impl.NoStackTraceThrowable;
 import io.vertx.core.impl.logging.Logger;
@@ -133,7 +137,7 @@ class SMTPConnection {
   }
 
   boolean isValid() {
-    return !closing && expirationTimestamp == 0 || System.currentTimeMillis() <= expirationTimestamp;
+    return (expirationTimestamp == 0 || System.currentTimeMillis() <= expirationTimestamp) && !quitSent;
   }
 
   void handleNSClosed(Void v) {
@@ -177,7 +181,7 @@ class SMTPConnection {
     capa.parseCapabilities(message);
   }
 
-  private void shutdown() {
+  void shutdown() {
     shutdown = true;
     if (!socketClosed) {
       socketClosed = true;
@@ -186,7 +190,7 @@ class SMTPConnection {
     handleClosed();
   }
 
-  void cleanHandlers() {
+  private void cleanHandlers() {
     errorHandler = null;
     commandReplyHandler = null;
   }
@@ -216,28 +220,30 @@ class SMTPConnection {
   void write(String str, int blank, Handler<String> commandResultHandler) {
     this.commandReplyHandler = commandResultHandler;
     checkClosed();
-    if (log.isDebugEnabled()) {
-      String logStr;
-      if (blank >= 0) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = blank; i < str.length(); i++) {
-          sb.append('*');
+    context.runOnContext(roc -> {
+      if (log.isDebugEnabled()) {
+        String logStr;
+        if (blank >= 0) {
+          StringBuilder sb = new StringBuilder();
+          for (int i = blank; i < str.length(); i++) {
+            sb.append('*');
+          }
+          logStr = str.substring(0, blank) + sb;
+        } else {
+          logStr = str;
         }
-        logStr = str.substring(0, blank) + sb;
-      } else {
-        logStr = str;
+        // avoid logging large mail body
+        if (logStr.length() < 1000) {
+          log.debug("command: " + logStr);
+        } else {
+          log.debug("command: " + logStr.substring(0, 1000) + "...");
+        }
       }
-      // avoid logging large mail body
-      if (logStr.length() < 1000) {
-        log.debug("command: " + logStr);
-      } else {
-        log.debug("command: " + logStr.substring(0, 1000) + "...");
-      }
-    }
-    ns.write(str + "\r\n", r -> {
-      if (r.failed()) {
-        handleNSException(r.cause());
-      }
+      ns.write(str + "\r\n", r -> {
+        if (r.failed()) {
+          handleNSException(r.cause());
+        }
+      });
     });
   }
 
@@ -250,15 +256,17 @@ class SMTPConnection {
     if (mayLog) {
       log.debug(str);
     }
-    if (ns.writeQueueFull()) {
-      ns.drainHandler(v -> {
-        // avoid getting confused by being called twice
-        ns.drainHandler(null);
+    context.runOnContext(roc -> {
+      if (ns.writeQueueFull()) {
+        ns.drainHandler(v -> {
+          // avoid getting confused by being called twice
+          ns.drainHandler(null);
+          ns.write(str + "\r\n").onComplete(promise);
+        });
+      } else {
         ns.write(str + "\r\n").onComplete(promise);
-      });
-    } else {
-      ns.write(str + "\r\n").onComplete(promise);
-    }
+      }
+    });
   }
 
   private void handleError(Throwable t) {
@@ -321,13 +329,7 @@ class SMTPConnection {
     quitSent = true;
     inuse = false;
     log.debug("send QUIT to close");
-    Promise<Void> closePromise = Promise.promise();
-    // make sure the connection is closed even after sending QUIT command
-    closePromise.future().onComplete(v -> context.runOnContext(vv -> {
-      shutdown();
-      promise.handle(v);
-    }));
-    writeLineWithDrainPromise("QUIT", false, closePromise);
+    writeLineWithDrainPromise("QUIT", false, promise);
   }
 
   private boolean checkClosed() {
@@ -357,6 +359,9 @@ class SMTPConnection {
       quitCloseConnection(promise);
     } else {
       this.closeHandler = promise;
+      if (quitSent) {
+        shutdown();
+      }
     }
   }
 
