@@ -22,7 +22,6 @@ import io.vertx.core.Promise;
 import io.vertx.core.impl.ContextInternal;
 import io.vertx.core.impl.EventLoopContext;
 import io.vertx.core.net.NetClient;
-import io.vertx.core.net.NetSocket;
 import io.vertx.core.net.impl.clientconnection.ConnectResult;
 import io.vertx.core.net.impl.clientconnection.Endpoint;
 import io.vertx.core.net.impl.clientconnection.Lease;

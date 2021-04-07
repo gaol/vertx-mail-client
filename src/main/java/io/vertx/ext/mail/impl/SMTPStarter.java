@@ -19,8 +19,6 @@ package io.vertx.ext.mail.impl;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
-import io.vertx.core.impl.logging.Logger;
-import io.vertx.core.impl.logging.LoggerFactory;
 import io.vertx.ext.mail.MailConfig;
 import io.vertx.ext.mail.impl.sasl.AuthOperationFactory;
 
@@ -30,8 +28,6 @@ import io.vertx.ext.mail.impl.sasl.AuthOperationFactory;
  * @author <a href="http://oss.lehmann.cx/">Alexander Lehmann</a>
  */
 class SMTPStarter {
-
-  private static final Logger log = LoggerFactory.getLogger(SMTPStarter.class);
 
   private final SMTPConnection connection;
   private final String hostname;
@@ -48,17 +44,14 @@ class SMTPStarter {
   }
 
   void serverGreeting(String message) {
-    log.debug("SMTPInitialDialogue");
     new SMTPInitialDialogue(connection, config, hostname, v -> doAuthentication(), this::handleError).start(message);
   }
 
   private void doAuthentication() {
-    log.debug("SMTPAuthentication");
     new SMTPAuthentication(connection, config, this.authOperationFactory, v -> handler.handle(Future.succeededFuture(connection)), this::handleError).start();
   }
 
   private void handleError(Throwable throwable) {
-    log.debug("handleError:" + throwable);
     handler.handle(Future.failedFuture(throwable));
   }
 

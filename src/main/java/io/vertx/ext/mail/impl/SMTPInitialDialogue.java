@@ -53,7 +53,6 @@ class SMTPInitialDialogue {
   }
 
   public void start(final String message) {
-    log.debug("server greeting: " + message);
     if (StatusCode.isStatusOk(message)) {
       if (!config.isDisableEsmtp()) {
         ehloCmd();
@@ -70,7 +69,6 @@ class SMTPInitialDialogue {
       .write(
         "EHLO " + hostname,
         message -> {
-          log.debug("EHLO result: " + message);
           if (StatusCode.isStatusOk(message)) {
             connection.parseCapabilities(message);
             if (connection.getCapa().isStartTLS()
@@ -93,7 +91,6 @@ class SMTPInitialDialogue {
 
   private void heloCmd() {
     connection.write("HELO " + hostname, message -> {
-      log.debug("HELO result: " + message);
       if (StatusCode.isStatusOk(message)) {
         finished();
       } else {
@@ -103,7 +100,6 @@ class SMTPInitialDialogue {
   }
 
   private void handleError(String message) {
-    log.debug("handleError:" + message);
     errorHandler.handle(new NoStackTraceThrowable(message));
   }
 
@@ -112,10 +108,9 @@ class SMTPInitialDialogue {
    */
   private void startTLSCmd() {
     connection.write("STARTTLS", message -> {
-      log.debug("STARTTLS result: " + message);
       connection.upgradeToSsl(ar -> {
         if (ar.succeeded()) {
-          log.debug("tls started");
+          log.trace("tls started");
           // capabilities may have changed, e.g.
           // if a service only announces PLAIN/LOGIN
           // on secure channel (e.g. googlemail)

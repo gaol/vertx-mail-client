@@ -114,7 +114,6 @@ class SMTPConnection {
   }
 
   void handleNSException(Throwable t) {
-    log.debug("exceptionHandler called");
     if (!socketClosed && !shutdown) {
       shutdown();
       log.debug("got an exception on the netsocket", t);
@@ -133,7 +132,7 @@ class SMTPConnection {
   }
 
   void handleNSClosed(Void v) {
-    log.debug("handleNSClosed() - socket has been closed");
+    log.trace("handleNSClosed() - socket has been closed");
     socketClosed = true;
     if (!shutdown && !quitSent) {
       handleError(new IOException("socket was closed unexpected."));
@@ -286,12 +285,12 @@ class SMTPConnection {
   }
 
   Future<SMTPConnection> returnToPool() {
-    log.debug("return to pool");
+    log.trace("return to pool");
     Promise<SMTPConnection> promise = context.promise();
     try {
       if (config.isKeepAlive() && !closing) {
         // recycle
-        log.debug("recycle for next use");
+        log.trace("recycle for next use");
         cleanHandlers();
         lease.recycle();
         inuse = false;
@@ -318,7 +317,7 @@ class SMTPConnection {
   void quitCloseConnection(Promise<Void> promise) {
     quitSent = true;
     inuse = false;
-    log.debug("send QUIT to close");
+    log.trace("send QUIT to close");
     writeLineWithDrainPromise("QUIT", false, promise);
   }
 
@@ -345,7 +344,7 @@ class SMTPConnection {
   void close(Promise<Void> promise) {
     closing = true;
     if (!inuse) {
-      log.debug("close by sending quit in close()");
+      log.trace("close by sending quit in close()");
       quitCloseConnection(promise);
     } else {
       this.closeHandler = promise;

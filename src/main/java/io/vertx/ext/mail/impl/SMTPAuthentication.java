@@ -135,7 +135,6 @@ class SMTPAuthentication {
       blank = 0;
     }
     connection.write(nextLine, blank, message2 -> {
-      log.debug("AUTH command result: " + message2);
       if (StatusCode.isStatusOk(message2)) {
         if (StatusCode.isStatusContinue(message2)) {
           authCmdStep(authMethod, message2, onError);

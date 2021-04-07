@@ -87,7 +87,7 @@ class SMTPConnectionPool {
   }
 
   void dispose() {
-    log.debug("SMTPEndPoint gets disposed.");
+    log.trace("SMTPEndPoint gets disposed.");
   }
 
   AuthOperationFactory getAuthOperationFactory() {
@@ -103,7 +103,6 @@ class SMTPConnectionPool {
   }
 
   private void getConnection0(String hostname, Context ctx, Handler<AsyncResult<SMTPConnection>> resultHandler, final int i) {
-    log.debug("getConnection()");
     if (closed) {
       resultHandler.handle(Future.failedFuture("connection pool is closed"));
     } else {
