@@ -48,7 +48,7 @@ class SMTPEndPoint extends Endpoint<Lease<SMTPConnection>> implements PoolConnec
     this.config = config;
     this.netClient = netClient;
     int maxSockets = config.getMaxPoolSize();
-    this.pool = ConnectionPool.pool(this, maxSockets, maxSockets, -1);
+    this.pool = ConnectionPool.pool(this, new int[] {maxSockets}, -1);
   }
 
   @Override
@@ -59,7 +59,7 @@ class SMTPEndPoint extends Endpoint<Lease<SMTPConnection>> implements PoolConnec
     } else {
       eventLoopContext = ctx.owner().createEventLoopContext(ctx.nettyEventLoop(), ctx.workerPool(), ctx.classLoader());
     }
-    pool.acquire(eventLoopContext, 1, handler);
+    pool.acquire(eventLoopContext, 0, handler);
   }
 
   synchronized void checkExpired(Handler<AsyncResult<List<SMTPConnection>>> handler) {
@@ -71,14 +71,11 @@ class SMTPEndPoint extends Endpoint<Lease<SMTPConnection>> implements PoolConnec
     netClient.connect(config.getPort(), config.getHostname()).onComplete(ar -> {
       if (ar.succeeded()) {
         incRefCount();
-        NetSocket socket = ar.result();
-        SMTPConnection connection = new SMTPConnection(config, socket)
-          .setContext(context)
-          .setEvictionHandler(v -> {
-            decRefCount();
-            listener.onRemove();
-          });
-        handler.handle(Future.succeededFuture(new ConnectResult<>(connection, 1, 1)));
+        SMTPConnection connection = new SMTPConnection(config, ar.result(), context, v -> {
+          decRefCount();
+          listener.onRemove();
+        });
+        handler.handle(Future.succeededFuture(new ConnectResult<>(connection, 1, 0)));
       } else {
         handler.handle(Future.failedFuture(ar.cause()));
       }

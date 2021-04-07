@@ -78,7 +78,7 @@ class SMTPConnectionPool {
       if (ar.succeeded()) {
         CompositeFuture.all(ar.result().stream().map(conn -> {
           Promise<Void> promise = Promise.promise();
-          conn.close(promise);
+          conn.quitCloseConnection(promise);
           return promise.future();
         }).collect(Collectors.toList()))
           .onComplete(v -> timerID = vertx.setTimer(config.getPoolCleanerPeriod(), this::checkExpired));

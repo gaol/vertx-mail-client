@@ -48,7 +48,7 @@ public class SMTPConnectionPoolTest extends SMTPTestWiser {
 
   /**
    * Test method for
-   * {@link io.vertx.ext.mail.impl.SMTPConnectionPool#getConnection("hostname", io.vertx.core.Handler, io.vertx.core.Handler)} .
+   * {@link io.vertx.ext.mail.impl.SMTPConnectionPool#getConnection(java.lang.String, io.vertx.core.Handler)} .
    */
   @Test
   public final void testgetConnection(TestContext testContext) {
@@ -432,15 +432,14 @@ public class SMTPConnectionPoolTest extends SMTPTestWiser {
         log.debug("got connection");
         testContext.assertEquals(1, pool.connCount());
         pool.close();
-        testContext.assertEquals(1, pool.connCount());
+        testContext.assertEquals(0, pool.connCount());
         final SMTPConnection conn = result.result();
-        conn.returnToPool();
-        vertx.setTimer(1000, v -> {
+        conn.returnToPool().onComplete(testContext.asyncAssertSuccess(h -> vertx.setTimer(100, v -> {
           testContext.assertTrue(conn.isClosed(), "connection was not closed");
           testContext.assertEquals(0, pool.connCount());
           log.debug("connection is closed");
           async.complete();
-        });
+        })));
       } else {
         log.info(result.cause());
         testContext.fail(result.cause());

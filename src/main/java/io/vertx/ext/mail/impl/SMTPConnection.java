@@ -47,7 +47,7 @@ class SMTPConnection {
   private final MailConfig config;
   private Lease<SMTPConnection> lease;
   private MultilineParser nsHandler;
-  private Handler<Void> evictionHandler;
+  private final Handler<Void> evictionHandler;
 
   private boolean evicted;
   private boolean socketClosed;
@@ -61,12 +61,14 @@ class SMTPConnection {
   private Handler<AsyncResult<Void>> closeHandler;
 
   private Capabilities capa = new Capabilities();
-  private ContextInternal context;
+  private final ContextInternal context;
   private long expirationTimestamp;
 
-  SMTPConnection(MailConfig config, NetSocket ns) {
+  SMTPConnection(MailConfig config, NetSocket ns, ContextInternal context, Handler<Void> evictionHandler) {
     this.config = config;
     this.ns = ns;
+    this.context = context;
+    this.evictionHandler = evictionHandler;
   }
 
   /**
@@ -77,16 +79,6 @@ class SMTPConnection {
    */
   private static long expirationTimestampOf(long timeout) {
     return timeout == 0 ? 0L : System.currentTimeMillis() + timeout * 1000;
-  }
-
-  SMTPConnection setEvictionHandler(Handler<Void> evictionHandler) {
-    this.evictionHandler = evictionHandler;
-    return this;
-  }
-
-  SMTPConnection setContext(ContextInternal ctx) {
-    this.context = ctx;
-    return this;
   }
 
   SMTPConnection setLease(Lease<SMTPConnection> lease) {
@@ -110,7 +102,7 @@ class SMTPConnection {
         Handler<String> currentHandler = commandReplyHandler;
         commandReplyHandler = null;
         if (currentHandler != null) {
-          currentHandler.handle(buffer.toString());
+          context.emit(buffer.toString(), currentHandler);
         }
       }
     });
@@ -157,10 +149,8 @@ class SMTPConnection {
     }
     if (!evicted) {
       evicted = true;
-      if (evictionHandler != null) {
-        evictionHandler.handle(null);
-        cleanHandlers();
-      }
+      evictionHandler.handle(null);
+      cleanHandlers();
     }
   }
 
@@ -220,7 +210,7 @@ class SMTPConnection {
   void write(String str, int blank, Handler<String> commandResultHandler) {
     this.commandReplyHandler = commandResultHandler;
     checkClosed();
-    context.runOnContext(roc -> {
+    context.emit(roc -> {
       if (log.isDebugEnabled()) {
         String logStr;
         if (blank >= 0) {
@@ -256,7 +246,7 @@ class SMTPConnection {
     if (mayLog) {
       log.debug(str);
     }
-    context.runOnContext(roc -> {
+    context.emit(roc -> {
       if (ns.writeQueueFull()) {
         ns.drainHandler(v -> {
           // avoid getting confused by being called twice
