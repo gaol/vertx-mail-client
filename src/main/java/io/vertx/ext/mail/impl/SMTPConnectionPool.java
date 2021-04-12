@@ -46,11 +46,11 @@ class SMTPConnectionPool {
 
   private final PRNG prng;
   private final AuthOperationFactory authOperationFactory;
-  private boolean closed = false;
-
   private final Vertx vertx;
   private final NetClient netClient;
   private final MailConfig config;
+
+  private boolean closed = false;
   private SMTPEndPoint endPoint;
   private long timerID = -1;
 
@@ -73,17 +73,15 @@ class SMTPConnectionPool {
     }
   }
 
-  private void checkExpired(long timer) {
+  private synchronized void checkExpired(long timer) {
     endPoint.checkExpired(ar -> {
       if (ar.succeeded()) {
-        CompositeFuture.all(ar.result().stream().map(conn -> {
-          Promise<Void> promise = Promise.promise();
-          conn.quitCloseConnection(promise);
-          return promise.future();
-        }).collect(Collectors.toList()))
-          .onComplete(v -> timerID = vertx.setTimer(config.getPoolCleanerPeriod(), this::checkExpired));
+        ar.result().forEach(c -> c.quitCloseConnection(Promise.promise()));
       }
     });
+    if (!closed) {
+      timerID = vertx.setTimer(config.getPoolCleanerPeriod(), this::checkExpired);
+    }
   }
 
   void dispose() {
@@ -98,11 +96,11 @@ class SMTPConnectionPool {
     getConnection(hostname, vertx.getOrCreateContext(), resultHandler);
   }
 
-  synchronized void getConnection(String hostname, Context ctx, Handler<AsyncResult<SMTPConnection>> resultHandler) {
+  void getConnection(String hostname, Context ctx, Handler<AsyncResult<SMTPConnection>> resultHandler) {
     getConnection0(hostname, ctx, resultHandler, 0);
   }
 
-  private void getConnection0(String hostname, Context ctx, Handler<AsyncResult<SMTPConnection>> resultHandler, final int i) {
+  private synchronized void getConnection0(String hostname, Context ctx, Handler<AsyncResult<SMTPConnection>> resultHandler, final int i) {
     if (closed) {
       resultHandler.handle(Future.failedFuture("connection pool is closed"));
     } else {
